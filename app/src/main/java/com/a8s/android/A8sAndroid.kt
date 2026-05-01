@@ -9,7 +9,6 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import org.json.JSONObject
-import java.io.File
 
 class A8sAndroid : Application() {
 
@@ -52,7 +51,7 @@ class A8sAndroid : Application() {
                     return true
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load config: %s", e.message)
+                Log.e(TAG, "Failed to load config: " + e.message)
             }
             return false
         }

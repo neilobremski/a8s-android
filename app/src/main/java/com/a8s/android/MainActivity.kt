@@ -80,7 +80,7 @@ class MainActivity : AppCompatActivity() {
             sb.append("Topic: ").append(config.remote.topic).append("
 
 ")
-            sb.append("Phonebook: ( " + config.phonebook.size + " entries)
+            sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)
 ")
             config.phonebook.forEach { (name, phone) ->
                 sb.append("  ").append(name).append(": ").append(phone).append("
