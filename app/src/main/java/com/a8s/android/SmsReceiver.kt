@@ -8,22 +8,29 @@ import android.telephony.SmsMessage
 import android.util.Log
 
 class SmsReceiver : BroadcastReceiver() {
+    companion object {
+        private const val TAG = "A8sSmsReceiver"
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+        
         val bundle = intent.extras ?: return
         val pdus = bundle.get("pdus") as? Array<*> ?: return
         val format = bundle.getString("format")
 
         for (pdu in pdus) {
-            val msg = SmsMessage.createFromPdu(pdu as ByteArray, format)
+            val msg = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                SmsMessage.createFromPdu(pdu as ByteArray, format)
+            } else {
+                SmsMessage.createFromPdu(pdu as ByteArray)
+            } ?: continue
+            
             val from = msg.displayOriginatingAddress ?: continue
             val body = msg.displayMessageBody ?: ""
             
-            val serviceIntent = Intent(context, A8sService::class.java)
-            // Note: This is a simplified pattern. For real production, 
-            // you might want a more robust way to pass data to the service.
-            // For now, we assume the service is running and can be reached.
-            // We should ideally use a singleton or broadcast to the service.
+            Log.d(TAG, "Incoming SMS from: " + from)
+            A8sService.instance?.publishIncoming(from, body)
         }
     }
 }

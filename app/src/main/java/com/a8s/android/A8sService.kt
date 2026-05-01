@@ -34,7 +34,9 @@ class A8sService : LifecycleService() {
         private const val TAG = "A8sService"
         private const val CHANNEL_ID = "a8s_android_channel"
         private const val NOTIF_ID = 1001
-        const val ACTION_KEEPALIVE_CHECK = "KEEPALIVE_CHECK"
+        
+        var instance: A8sService? = null
+            private set
     }
 
     private var mqttClient: MqttAsyncClient? = null
@@ -46,6 +48,7 @@ class A8sService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification("Starting..."))
 
@@ -59,6 +62,11 @@ class A8sService : LifecycleService() {
 
         registerNetworkCallback()
         connect()
+    }
+
+    override fun onDestroy() {
+        instance = null
+        super.onDestroy()
     }
 
     private fun connect() {
@@ -116,7 +124,6 @@ class A8sService : LifecycleService() {
         try {
             val json = JSONObject(payload)
             val to = json.optString("to")
-            val from = json.optString("from")
             val body = json.optString("body")
 
             val config = A8sAndroid.config ?: return
@@ -145,7 +152,11 @@ class A8sService : LifecycleService() {
 
     fun publishIncoming(fromPhone: String, body: String) {
         val config = A8sAndroid.config ?: return
-        val names = config.phonebook.filterValues { it == fromPhone }.keys
+        val normalizedFrom = fromPhone.replace("[^0-9+] ".toRegex(), "")
+        
+        val names = config.phonebook.filterValues { 
+            it.replace("[^0-9+] ".toRegex(), "") == normalizedFrom 
+        }.keys
 
         names.forEach { name ->
             val payload = JSONObject().apply {
@@ -188,7 +199,7 @@ class A8sService : LifecycleService() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("a8s Android")
             .setContentText(status)
-            .setSmallIcon(android.R.drawable.ic_menu_message)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setOngoing(true)
             .build()
     }
