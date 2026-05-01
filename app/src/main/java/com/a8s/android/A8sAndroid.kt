@@ -51,7 +51,7 @@ class A8sAndroid : Application() {
                     return true
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load config: " + e.message)
+                Log.e(TAG, "Failed to load config: " + (e.message ?: "unknown error"))
             }
             return false
         }
