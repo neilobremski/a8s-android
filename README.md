@@ -1,6 +1,6 @@
 # a8s-android
 
-A high-reliability messaging bridge for the [a8s (Agent Infinity System)](https://github.com/google-gemini/gemini-cli). It turns an Android phone into a messaging gateway agent that can send and receive SMS/RCS messages via MQTT.
+A high-reliability messaging bridge for the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/blob/main/apps/a8s/README.md). It turns an Android phone into a messaging gateway agent that can send and receive SMS/RCS messages via MQTT.
 
 ## Features
 
