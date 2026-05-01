@@ -15,6 +15,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var statusText: TextView
     private lateinit var configDetail: TextView
+    private lateinit var logText: TextView
+    private lateinit var logScroll: ScrollView
 
     private val pickJsonLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -49,22 +51,51 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(loadBtn)
 
-        val scroll = ScrollView(this).apply {
+        configDetail = TextView(this).apply {
+            textSize = 14f
+            setPadding(0, 32, 0, 32)
+        }
+        root.addView(configDetail)
+        
+        // Log Section
+        val logLabel = TextView(this).apply {
+            text = "Console Logs:"
+            textSize = 14f
+            setPadding(0, 32, 0, 8)
+        }
+        root.addView(logLabel)
+
+        logScroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
                 1f
             )
+            setBackgroundColor(0xFFEEEEEE.toInt())
         }
-        configDetail = TextView(this).apply {
-            textSize = 14f
-            setPadding(0, 32, 0, 0)
+        logText = TextView(this).apply {
+            textSize = 12f
+            setPadding(16, 16, 16, 16)
+            typeface = android.graphics.Typeface.MONOSPACE
         }
-        scroll.addView(configDetail)
-        root.addView(scroll)
+        logScroll.addView(logText)
+        root.addView(logScroll)
 
         setContentView(root)
+        
+        A8sAndroid.onLogListener = {
+            runOnUiThread { 
+                logText.text = A8sAndroid.getLogs()
+                logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+            }
+        }
+        
         updateUI()
+    }
+
+    override fun onDestroy() {
+        A8sAndroid.onLogListener = null
+        super.onDestroy()
     }
 
     private fun updateUI() {
@@ -76,12 +107,10 @@ class MainActivity : AppCompatActivity() {
             statusText.text = "Status: Configured as " + config.device
             val sb = StringBuilder()
             sb.append("Remote URL: ").append(config.remote.url).append("\n")
-            sb.append("Topic: ").append(config.remote.topic).append("\n\n")
-            sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)\n")
-            config.phonebook.forEach { (name, phone) ->
-                sb.append("  ").append(name).append(": ").append(phone).append("\n")
-            }
+            sb.append("Topic: ").append(config.remote.topic).append("\n")
+            sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)")
             configDetail.text = sb.toString()
         }
+        logText.text = A8sAndroid.getLogs()
     }
 }

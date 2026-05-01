@@ -5,13 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
 import android.telephony.SmsMessage
-import android.util.Log
 
 class SmsReceiver : BroadcastReceiver() {
-    companion object {
-        private const val TAG = "A8sSmsReceiver"
-    }
-
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
         
@@ -29,7 +24,7 @@ class SmsReceiver : BroadcastReceiver() {
             val from = msg.displayOriginatingAddress ?: continue
             val body = msg.displayMessageBody ?: ""
             
-            Log.d(TAG, "Incoming SMS from: " + from)
+            A8sAndroid.log("Received SMS: ")
             A8sService.instance?.publishIncoming(from, body)
         }
     }

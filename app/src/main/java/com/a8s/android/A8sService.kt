@@ -16,15 +16,12 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
-import android.os.SystemClock
 import android.telephony.SmsManager
-import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import org.eclipse.paho.client.mqttv3.*
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
-import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLSocketFactory
 
@@ -65,7 +62,9 @@ class A8sService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        A8sAndroid.log("Service stopping")
         instance = null
+        mqttClient?.disconnect()
         super.onDestroy()
     }
 
@@ -90,6 +89,7 @@ class A8sService : LifecycleService() {
                 override fun connectionLost(cause: Throwable?) {
                     isConnected.set(false)
                     updateNotification("Disconnected")
+                    A8sAndroid.log("MQTT Connection Lost: " + cause?.message)
                     handler.postDelayed({ connect() }, 5000)
                 }
 
@@ -100,17 +100,21 @@ class A8sService : LifecycleService() {
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
             })
 
+            A8sAndroid.log("MQTT Connecting to ")
             mqttClient!!.connect(opts, null, object : IMqttActionListener {
                 override fun onSuccess(asyncActionToken: IMqttToken?) {
                     isConnected.set(true)
                     updateNotification("Connected")
+                    A8sAndroid.log("MQTT Connected")
                     subscribe()
                 }
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
+                    A8sAndroid.log("MQTT Connect Failed: " + exception?.message)
                     handler.postDelayed({ connect() }, 5000)
                 }
             })
         } catch (e: Exception) {
+            A8sAndroid.log("MQTT setup error: " + e.message)
             handler.postDelayed({ connect() }, 5000)
         }
     }
@@ -118,6 +122,7 @@ class A8sService : LifecycleService() {
     private fun subscribe() {
         val config = A8sAndroid.config ?: return
         mqttClient?.subscribe(config.remote.topic, 1)
+        A8sAndroid.log("MQTT Subscribed to " + config.remote.topic)
     }
 
     private fun handleMqttMessage(payload: String) {
@@ -130,10 +135,11 @@ class A8sService : LifecycleService() {
             val phoneNumber = config.phonebook[to]
 
             if (phoneNumber != null) {
+                A8sAndroid.log("MQTT -> SMS to  ()")
                 sendSms(phoneNumber, body)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error handling MQTT message")
+            A8sAndroid.log("MQTT Handle Error: " + e.message)
         }
     }
 
@@ -146,17 +152,22 @@ class A8sService : LifecycleService() {
             }
             smsManager.sendTextMessage(to, null, body, null, null)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send SMS")
+            A8sAndroid.log("SMS Send Failed: " + e.message)
         }
     }
 
     fun publishIncoming(fromPhone: String, body: String) {
         val config = A8sAndroid.config ?: return
-        val normalizedFrom = fromPhone.replace("[^0-9+] ".toRegex(), "")
+        val normalizedFrom = fromPhone.replace("[^0-9+]".toRegex(), "")
         
         val names = config.phonebook.filterValues { 
-            it.replace("[^0-9+] ".toRegex(), "") == normalizedFrom 
+            it.replace("[^0-9+]".toRegex(), "") == normalizedFrom 
         }.keys
+
+        if (names.isEmpty()) {
+            A8sAndroid.log("Ignored incoming from  (not in phonebook)")
+            return
+        }
 
         names.forEach { name ->
             val payload = JSONObject().apply {
@@ -167,8 +178,9 @@ class A8sService : LifecycleService() {
             
             try {
                 mqttClient?.publish(config.remote.topic, MqttMessage(payload.toByteArray()))
+                A8sAndroid.log("SMS -> MQTT from ")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to publish")
+                A8sAndroid.log("MQTT Publish Failed: " + e.message)
             }
         }
     }
@@ -181,6 +193,7 @@ class A8sService : LifecycleService() {
             .build()
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                A8sAndroid.log("Network Available")
                 handler.post { connect() }
             }
         }

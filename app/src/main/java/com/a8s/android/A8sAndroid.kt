@@ -9,6 +9,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import org.json.JSONObject
+import java.util.*
 
 class A8sAndroid : Application() {
 
@@ -18,6 +19,22 @@ class A8sAndroid : Application() {
         
         var config: Config? = null
             private set
+
+        private val logs = LinkedList<String>()
+        var onLogListener: (() -> Unit)? = null
+
+        fun log(msg: String) {
+            val timestamp = java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            val line = "[] "
+            Log.i(TAG, line)
+            synchronized(logs) {
+                logs.add(line)
+                if (logs.size > 50) logs.removeFirst()
+            }
+            onLogListener?.invoke()
+        }
+
+        fun getLogs(): String = synchronized(logs) { logs.joinToString("\n") }
 
         fun loadConfig(context: Context, uri: Uri? = null): Boolean {
             val resolver = context.contentResolver
@@ -47,11 +64,11 @@ class A8sAndroid : Application() {
 
                     config = Config(device, phonebookMap, remote)
                     saveUri(context, targetUri)
-                    Log.i(TAG, "Config loaded successfully")
+                    log("Config loaded: ")
                     return true
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load config: " + (e.message ?: "unknown error"))
+                log("Config error: " + (e.message ?: "unknown"))
             }
             return false
         }
@@ -83,6 +100,7 @@ class A8sAndroid : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        log("App starting")
         requestBatteryOptimizationExclusion()
         if (loadConfig(this)) {
             startA8sService()
@@ -100,7 +118,7 @@ class A8sAndroid : Application() {
                     }
                     startActivity(intent)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Could not request battery optimization exclusion")
+                    log("Battery permission failed")
                 }
             }
         }
