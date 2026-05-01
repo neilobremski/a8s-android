@@ -75,16 +75,11 @@ class MainActivity : AppCompatActivity() {
         } else {
             statusText.text = "Status: Configured as " + config.device
             val sb = StringBuilder()
-            sb.append("Remote URL: ").append(config.remote.url).append("
-")
-            sb.append("Topic: ").append(config.remote.topic).append("
-
-")
-            sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)
-")
+            sb.append("Remote URL: ").append(config.remote.url).append("\n")
+            sb.append("Topic: ").append(config.remote.topic).append("\n\n")
+            sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)\n")
             config.phonebook.forEach { (name, phone) ->
-                sb.append("  ").append(name).append(": ").append(phone).append("
-")
+                sb.append("  ").append(name).append(": ").append(phone).append("\n")
             }
             configDetail.text = sb.toString()
         }
