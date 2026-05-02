@@ -60,7 +60,7 @@ jobs:
         run: |
           mkdir -p release-stage
           cp app/build/outputs/apk/debug/app-debug.apk \
-             "release-stage/knobert-${{ steps.ver.outputs.version }}-debug.apk"
+             "release-stage/a8s-android-${{ steps.ver.outputs.version }}-debug.apk"
 
       - name: Create tag
         if: steps.tag_check.outputs.skip == 'false'

@@ -12,9 +12,9 @@
 - **Runtime config** – the app loads a JSON file named `a8s.json` via the Storage Access Framework. The schema is shown in the README.
 - **Default launch** – run `adb install app/build/outputs/apk/debug/app-debug.apk` and open the app. The UI will prompt for the config file.
 - **Gradle wrapper** – uses Gradle 8.5. On Windows call `./gradlew.bat`.
-- **Project name** – `knobert-phone`. Refer to this when filtering Android logs.
+- **Project name** – `a8s-android`. Refer to this when filtering Android logs.
 - **Service** – a foreground `A8sService` (type `connectedDevice`) keeps the device online at all times.
-- **Test/CI** – no unit tests; CI only builds the APK.
+- **Test/CI** – unit tests live in `app/src/test/...`; CI runs Detekt + tests + APK build via `.github/workflows/ci.yml`.
 
 ## Quick start
 
