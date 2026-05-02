@@ -49,6 +49,29 @@ class CmdHelpersTest {
         assertEquals(CmdHelpers.VIDEO_DEFAULT_SECONDS, CmdHelpers.parseVideoSeconds(listOf("forever")))
     }
 
+    // ── /audio ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseAudioSeconds default`() {
+        assertEquals(CmdHelpers.AUDIO_DEFAULT_SECONDS, CmdHelpers.parseAudioSeconds(emptyList()))
+    }
+
+    @Test
+    fun `parseAudioSeconds clamps over 60 to 60`() {
+        assertEquals(60, CmdHelpers.parseAudioSeconds(listOf("999")))
+    }
+
+    @Test
+    fun `parseAudioSeconds clamps zero or negative to 1`() {
+        assertEquals(1, CmdHelpers.parseAudioSeconds(listOf("0")))
+        assertEquals(1, CmdHelpers.parseAudioSeconds(listOf("-3")))
+    }
+
+    @Test
+    fun `parseAudioSeconds garbage uses default`() {
+        assertEquals(CmdHelpers.AUDIO_DEFAULT_SECONDS, CmdHelpers.parseAudioSeconds(listOf("forever")))
+    }
+
     // ── /location ─────────────────────────────────────────────────────────
 
     @Test

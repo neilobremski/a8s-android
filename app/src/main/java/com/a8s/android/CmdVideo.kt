@@ -264,15 +264,14 @@ object CmdVideo {
     }
 
     private fun currentDisplayRotation(context: Context): Int {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
-            ?: return 0
-        @Suppress("DEPRECATION")
-        val r = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display?.rotation ?: Surface.ROTATION_0
-        } else {
-            wm.defaultDisplay.rotation
-        }
-        return when (r) {
+        // Use DisplayManager. Service contexts are not visual-associated
+        // on API 30+ — Service.getDisplay() throws
+        // UnsupportedOperationException. DisplayManager works from any
+        // context including foreground services.
+        val dm = context.getSystemService(Context.DISPLAY_SERVICE)
+            as? android.hardware.display.DisplayManager ?: return 0
+        val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return 0
+        return when (display.rotation) {
             Surface.ROTATION_0 -> 0
             Surface.ROTATION_90 -> 90
             Surface.ROTATION_180 -> 180
