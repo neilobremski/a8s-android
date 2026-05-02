@@ -16,19 +16,22 @@ class MqttRouteTest {
         forward = forward,
         owner = owner,
         phonebook = phonebook,
-        remote = A8sAndroid.RemoteConfig(
-            url = "ssl://broker:8883",
-            topic = "t",
-            username = "u",
-            password = "p",
+        remotes = mapOf(
+            "default" to RemoteConfig(
+                broker = "ssl://broker:8883",
+                topic = "t",
+                username = "u",
+                password = "p",
+            ),
         ),
+        services = emptyList(),
     )
 
     @Test
     fun `to == device with forward set and known sender produces Forward route`() {
         val payload = """{"to":"my-phone","from":"Clover","content":"hello"}"""
         val r = decideRoute(payload, config())
-        assertEquals(MqttRoute.Forward("+15550001111", "Clover: hello"), r)
+        assertEquals(MqttRoute.Forward("+15550001111", "hello"), r)
     }
 
     @Test
@@ -163,7 +166,7 @@ class MqttRouteTest {
         val payload = """{"to":"my-phone","from":"Neil","content":"hello"}"""
         val r = decideRoute(payload, cfg)
         assertTrue(r is MqttRoute.Forward)
-        assertEquals(MqttRoute.Forward("+15550001111", "Neil: hello"), r)
+        assertEquals(MqttRoute.Forward("+15550001111", "hello"), r)
     }
 
     @Test

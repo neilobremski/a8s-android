@@ -36,6 +36,11 @@ cluster to a phone. Acts as a participant on the MQTT topic and:
 | `PublishDedup.kt` | Bounded LRU keyed on `<recipient>\|<body>`, default 5-minute window / 100 entries. Stops the duplicate-publish bug from Google Messages re-posting notifications. |
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
 | `Updater.kt` | `/update` plumbing — fetches GitHub Releases JSON, picks the `a8s-android-*-debug.apk` asset, downloads it, and `compareVersions` to decide if newer. The actual install kicks off via `ACTION_VIEW` + FileProvider in `A8sService.triggerInstallPrompt`. JSON parsing + version compare are unit-tested; HTTP and FileProvider sit in thin Android-only wrappers. |
+| `Screenshot.kt` | `/screenshot` plumbing — `MediaProjection` + `ImageReader` + `VirtualDisplay` to grab one frame, write as PNG. The user grants projection consent once via the **Enable Screen Capture** button in MainActivity; the `(resultCode, Intent)` pair is held in the service for the lifetime of the process. Each `/screenshot` builds a fresh `MediaProjection` from the cached consent, captures + releases to keep the OS's media-projection notification quiet between shots. |
+| `RemoteConfig.kt` | One MQTT remote (transport, broker, topic, username, password). |
+| `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — turns the JSON config into typed `Map<String, RemoteConfig>` + `List<StorageService>`. Accepts both new (`remotes` map) and legacy (singular `remote` block) shapes; rejects unknown spec keys to fail loud on typos. |
+| `StorageService.kt` | Interface for cross-cluster file backends — `store(file): URL`, `retrieve(url, dest): Bool`. Stateless. |
+| `TempFileOrgService.kt` | First (and currently only) `StorageService` impl. Pure-stdlib `HttpURLConnection` multipart upload + GET-`/download` retrieval. 50 MiB cap to stay well under the upstream's 100 MB hard limit. |
 
 Tests under `app/src/test/java/com/a8s/android/` mirror the pure-Kotlin
 files. Anything that touches Android framework classes lives in the
@@ -96,14 +101,38 @@ contract:
   "forward":  "<optional: number for messages addressed to device>",
   "owner":    "<optional: the only name allowed to run /commands>",
   "phonebook": { "Clover": "+15550001111", "Gerry": "+15550002222" },
-  "remote":   {
-    "url":      "ssl://broker:8883",
-    "topic":    "...",
-    "username": "...",
-    "password": "..."
+  "remotes": {
+    "hivemq": {
+      "transport": "mqtt",
+      "broker":    "ssl://broker:8883",
+      "topic":     "...",
+      "username":  "...",
+      "password":  "..."
+    }
+  },
+  "services": {
+    "tempfile": { "service": "tempfile_org", "url": "https://tempfile.org" }
   }
 }
 ```
+
+**Multiple remotes** — `remotes` is a map; each entry gets its own
+paho client, subscriber thread, and reconnect loop. Outbound publishes
+fan out to every connected remote (the host cluster's a8s router
+dedups by ULID, so this is idempotent). Inbound funnels into one
+shared `handleMqttMessage` regardless of source.
+
+**Storage services** — `services` is a map keyed by local name, each
+entry dispatched by `service` field. Currently only `tempfile_org` is
+implemented. The actual upload/download wiring to the message-routing
+flows is plumbed but not yet consumed (no MMS attachment path lands
+file payloads on this side); the interface and config parsing are in
+place so future PRs that add MMS or APK-share flows can pick them up.
+
+**Backwards compatibility (1.9.0 → 1.10.0):** the parser also accepts
+the legacy singular `"remote"` block (with `"url"` instead of
+`"broker"`) and wraps it as `remotes: { "default": ... }`. Lets an
+in-place `/update` not require the user to rewrite the config first.
 
 - The user picks the file via Storage Access Framework; the URI is
   persisted (`takePersistableUriPermission`) so reloads work post-reboot.

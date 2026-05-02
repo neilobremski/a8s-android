@@ -10,6 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -29,7 +31,6 @@ import org.eclipse.paho.client.mqttv3.*
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.io.File
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLSocketFactory
 
 class A8sService : LifecycleService() {
@@ -46,14 +47,25 @@ class A8sService : LifecycleService() {
     private val smsRequestSeq = java.util.concurrent.atomic.AtomicInteger(0)
     private var sentResultReceiver: BroadcastReceiver? = null
 
-    private var mqttClient: MqttAsyncClient? = null
-    private val isConnected = AtomicBoolean(false)
+    // One paho client per configured remote, keyed by remote name. The
+    // map is mutated only on the main thread (`connectAll`/`onDestroy`),
+    // so a plain MutableMap is enough — paho's own callbacks don't add
+    // entries.
+    private val mqttClients = mutableMapOf<String, MqttAsyncClient>()
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var wifiLock: WifiManager.WifiLock
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val publishDedup = PublishDedup()
     private var serviceStartMs: Long = 0L
+
+    // Cached MediaProjection consent. Set by MainActivity after the user
+    // grants screen capture; held until the service dies. We store the
+    // raw resultCode + Intent rather than the live MediaProjection so
+    // each /screenshot can build a fresh projection (Android revokes the
+    // projection after a single capture in some configurations).
+    private var projectionResultCode: Int = 0
+    private var projectionData: Intent? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -78,7 +90,7 @@ class A8sService : LifecycleService() {
 
         registerNetworkCallback()
         registerSentResultReceiver()
-        connect()
+        connectAll()
     }
 
     private fun registerSentResultReceiver() {
@@ -117,66 +129,85 @@ class A8sService : LifecycleService() {
             try { unregisterReceiver(it) } catch (_: Exception) { }
         }
         sentResultReceiver = null
-        mqttClient?.disconnect()
+        mqttClients.values.forEach { c ->
+            try { c.disconnect() } catch (_: Exception) { }
+        }
+        mqttClients.clear()
         super.onDestroy()
     }
 
-    private fun connect() {
+    private fun connectAll() {
         val config = A8sAndroid.config ?: return
-        if (isConnected.get()) return
+        config.remotes.forEach { (name, rc) -> connectOne(name, rc) }
+    }
+
+    private fun connectOne(name: String, rc: RemoteConfig) {
+        val existing = mqttClients[name]
+        if (existing != null && existing.isConnected) return
+        // Drop any stale half-open client before opening a new one.
+        existing?.let {
+            try { it.disconnect() } catch (_: Exception) { }
+            try { it.close() } catch (_: Exception) { }
+        }
 
         try {
-            val serverUri = config.remote.url
-            mqttClient = MqttAsyncClient(serverUri, "a8s-android-" + config.device, MemoryPersistence())
-
+            val device = A8sAndroid.config?.device ?: "a8s-android"
+            val client = MqttAsyncClient(
+                rc.broker,
+                "a8s-android-$device-$name",
+                MemoryPersistence(),
+            )
             val opts = MqttConnectOptions().apply {
-                userName = config.remote.username
-                password = config.remote.password.toCharArray()
+                userName = rc.username
+                password = rc.password?.toCharArray()
                 isCleanSession = true
-                if (serverUri.startsWith("ssl://") || serverUri.startsWith("mqtts://")) {
+                if (rc.broker.startsWith("ssl://") || rc.broker.startsWith("mqtts://")) {
                     socketFactory = SSLSocketFactory.getDefault()
                 }
             }
-
-            mqttClient!!.setCallback(object : MqttCallback {
+            client.setCallback(object : MqttCallback {
                 override fun connectionLost(cause: Throwable?) {
-                    isConnected.set(false)
-                    updateNotification("Disconnected")
-                    A8sAndroid.log("MQTT Connection Lost: " + cause?.message)
-                    handler.postDelayed({ connect() }, 5000)
+                    A8sAndroid.log("MQTT[$name] Connection Lost: " + cause?.message)
+                    updateNotification(connectionStatusSummary())
+                    handler.postDelayed({ connectOne(name, rc) }, 5000)
                 }
-
                 override fun messageArrived(topic: String, message: MqttMessage) {
                     handleMqttMessage(String(message.payload))
                 }
-
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
             })
 
-            A8sAndroid.log("MQTT Connecting to $serverUri")
-            mqttClient!!.connect(opts, null, object : IMqttActionListener {
+            A8sAndroid.log("MQTT[$name] Connecting to ${rc.broker}")
+            client.connect(opts, null, object : IMqttActionListener {
                 override fun onSuccess(asyncActionToken: IMqttToken?) {
-                    isConnected.set(true)
-                    updateNotification("Connected")
-                    A8sAndroid.log("MQTT Connected")
-                    subscribe()
+                    A8sAndroid.log("MQTT[$name] Connected")
+                    try {
+                        client.subscribe(rc.topic, 1)
+                        A8sAndroid.log("MQTT[$name] Subscribed to ${rc.topic}")
+                    } catch (e: Exception) {
+                        A8sAndroid.log("MQTT[$name] Subscribe failed: ${e.message}")
+                    }
+                    updateNotification(connectionStatusSummary())
                 }
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                    A8sAndroid.log("MQTT Connect Failed: " + exception?.message)
-                    handler.postDelayed({ connect() }, 5000)
+                    A8sAndroid.log("MQTT[$name] Connect Failed: " + exception?.message)
+                    updateNotification(connectionStatusSummary())
+                    handler.postDelayed({ connectOne(name, rc) }, 5000)
                 }
             })
+            mqttClients[name] = client
         } catch (e: Exception) {
-            A8sAndroid.log("MQTT setup error: " + e.message)
-            handler.postDelayed({ connect() }, 5000)
+            A8sAndroid.log("MQTT[$name] setup error: " + e.message)
+            handler.postDelayed({ connectOne(name, rc) }, 5000)
         }
     }
 
-    private fun subscribe() {
-        val config = A8sAndroid.config ?: return
-        mqttClient?.subscribe(config.remote.topic, 1)
-        A8sAndroid.log("MQTT Subscribed to " + config.remote.topic)
+    private fun connectionStatusSummary(): String {
+        val total = A8sAndroid.config?.remotes?.size ?: 0
+        val connected = mqttClients.values.count { it.isConnected }
+        return if (total == 0) "Disconnected" else "Connected $connected/$total"
     }
+
 
     private fun handleMqttMessage(payload: String) {
         val config = A8sAndroid.config ?: return
@@ -209,11 +240,15 @@ class A8sService : LifecycleService() {
 
     private fun executeCommand(cmd: MqttRoute.Command) {
         val config = A8sAndroid.config ?: return
-        // /update is async — it does HTTP + filesystem work. Run it on a
-        // worker thread so we don't block paho's network thread; reply
-        // arrives whenever it's ready.
+        // /update and /screenshot do HTTP + filesystem work. Run them on
+        // worker threads so we don't block paho's network thread; the
+        // reply arrives whenever it's ready.
         if (cmd.name == "update") {
             Thread { runUpdateCommand(config, cmd) }.start()
+            return
+        }
+        if (cmd.name == "screenshot") {
+            Thread { runScreenshotCommand(config, cmd) }.start()
             return
         }
         val reply = when (cmd.name) {
@@ -222,6 +257,60 @@ class A8sService : LifecycleService() {
             else -> Commands.renderUnknown(cmd.name)
         }
         publishToOwner(config, cmd.owner, reply)
+    }
+
+    /** Called from MainActivity after the user grants screen-capture
+     *  consent. We hold the result so subsequent /screenshot commands
+     *  can rebuild the MediaProjection without prompting again. */
+    fun setProjectionConsent(resultCode: Int, data: Intent) {
+        projectionResultCode = resultCode
+        projectionData = data
+    }
+
+    private fun runScreenshotCommand(config: A8sAndroid.Config, cmd: MqttRoute.Command) {
+        val data = projectionData
+        if (data == null || projectionResultCode == 0) {
+            publishToOwner(
+                config, cmd.owner,
+                "Screen capture not authorized. Open the app and tap " +
+                    "\"Enable Screen Capture (for /screenshot)\".",
+            )
+            return
+        }
+        if (config.services.isEmpty()) {
+            publishToOwner(
+                config, cmd.owner,
+                "Cannot send screenshot: no storage service configured. " +
+                    "Add a `services` entry to a8s.json (e.g. tempfile_org).",
+            )
+            return
+        }
+        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        var projection: MediaProjection? = null
+        try {
+            projection = mgr.getMediaProjection(projectionResultCode, data)
+            if (projection == null) {
+                publishToOwner(config, cmd.owner, "Screen capture failed: projection unavailable")
+                return
+            }
+            val dest = File(File(cacheDir, "screenshots"), "screenshot-${System.currentTimeMillis()}.png")
+            val captured = Screenshot(this, projection).capture(dest)
+            if (!captured) {
+                publishToOwner(config, cmd.owner, "Screen capture failed: timed out waiting for frame")
+                return
+            }
+            A8sAndroid.log("Screenshot captured: ${dest.length()} bytes")
+            publishToOwner(
+                config, cmd.owner,
+                "Screenshot (${dest.length()} bytes)",
+                files = listOf(dest),
+            )
+        } catch (e: Exception) {
+            A8sAndroid.log("Screenshot failed: ${e.message}")
+            publishToOwner(config, cmd.owner, "Screenshot failed: ${e.message}")
+        } finally {
+            try { projection?.stop() } catch (_: Exception) { }
+        }
     }
 
     private fun runUpdateCommand(config: A8sAndroid.Config, cmd: MqttRoute.Command) {
@@ -293,14 +382,21 @@ class A8sService : LifecycleService() {
         } else "v?"
         val networkType = describeActiveNetwork()
         val (battPct, charging) = readBattery()
+        val remoteStatuses = config.remotes.map { (name, rc) ->
+            Commands.RemoteStatus(
+                name = name,
+                broker = rc.broker,
+                topic = rc.topic,
+                connected = mqttClients[name]?.isConnected == true,
+            )
+        }
         return Commands.InfoSnapshot(
             appVersion = appVersion,
             deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}",
             androidRelease = Build.VERSION.RELEASE ?: "?",
             sdkInt = Build.VERSION.SDK_INT,
-            mqttConnected = isConnected.get(),
-            mqttBroker = config.remote.url,
-            mqttTopic = config.remote.topic,
+            remotes = remoteStatuses,
+            services = config.services.map { it.id },
             networkType = networkType,
             batteryPercent = battPct,
             batteryCharging = charging,
@@ -335,21 +431,82 @@ class A8sService : LifecycleService() {
         return Pair(pct, charging)
     }
 
-    private fun publishToOwner(config: A8sAndroid.Config, owner: String, body: String) {
+    private fun publishToOwner(
+        config: A8sAndroid.Config,
+        owner: String,
+        body: String,
+        files: List<File> = emptyList(),
+    ) {
+        val filesArr = buildFilesArray(config, files)
         val payload = JSONObject().apply {
             put("id", Ulid.new())
             put("date", isoNowUtc())
             put("from", config.device)
             put("to", owner)
             put("content", body)
-            put("files", org.json.JSONArray())
+            put("files", filesArr)
         }.toString()
-        try {
-            mqttClient?.publish(config.remote.topic, MqttMessage(payload.toByteArray()))
-            A8sAndroid.log("CMD -> MQTT ${config.device} -> $owner (${body.length} chars)")
-        } catch (e: Exception) {
-            A8sAndroid.log("MQTT Publish Failed: ${e.message}")
+        val (ok, fail) = publishToAllRemotes(config, payload)
+        A8sAndroid.log(
+            "CMD -> MQTT ${config.device} -> $owner " +
+                "(${body.length} chars, ${files.size} file(s); $ok/$fail remotes)",
+        )
+    }
+
+    /**
+     * Upload each file to every configured storage service, wrap into
+     * the wire shape `[{filename, storage: [url, ...]}, ...]`. Empty
+     * `storage` array if all services failed (caller's already logged
+     * the per-service failure).
+     */
+    private fun buildFilesArray(
+        config: A8sAndroid.Config,
+        files: List<File>,
+    ): org.json.JSONArray {
+        val arr = org.json.JSONArray()
+        for (file in files) {
+            val urls = org.json.JSONArray()
+            for (svc in config.services) {
+                try {
+                    urls.put(svc.store(file))
+                    A8sAndroid.log("Storage[${svc.id}] uploaded ${file.name}")
+                } catch (e: StorageException) {
+                    A8sAndroid.log("Storage[${svc.id}] upload failed: ${e.message}")
+                }
+            }
+            arr.put(JSONObject().apply {
+                put("filename", file.name)
+                if (urls.length() > 0) put("storage", urls)
+            })
         }
+        return arr
+    }
+
+    /**
+     * Fan-out publish: try every configured remote, swallow per-remote
+     * failures (we already log them) and return success/failure counts.
+     * The host-side a8s router dedups by ULID, so multiple remotes
+     * receiving the same envelope is idempotent.
+     */
+    private fun publishToAllRemotes(config: A8sAndroid.Config, payload: String): Pair<Int, Int> {
+        var ok = 0
+        var fail = 0
+        config.remotes.forEach { (name, rc) ->
+            val client = mqttClients[name]
+            if (client == null || !client.isConnected) {
+                A8sAndroid.log("MQTT[$name] publish skipped: not connected")
+                fail++
+                return@forEach
+            }
+            try {
+                client.publish(rc.topic, MqttMessage(payload.toByteArray()))
+                ok++
+            } catch (e: Exception) {
+                A8sAndroid.log("MQTT[$name] publish failed: ${e.message}")
+                fail++
+            }
+        }
+        return Pair(ok, fail)
     }
 
     private fun sendSms(to: String, body: String) {
@@ -447,13 +604,8 @@ class A8sService : LifecycleService() {
                 put("content", body)
                 put("files", org.json.JSONArray())
             }.toString()
-
-            try {
-                mqttClient?.publish(config.remote.topic, MqttMessage(payload.toByteArray()))
-                A8sAndroid.log("SMS -> MQTT ${config.device} -> $name: ${preview(body)}")
-            } catch (e: Exception) {
-                A8sAndroid.log("MQTT Publish Failed: " + e.message)
-            }
+            val (ok, fail) = publishToAllRemotes(config, payload)
+            A8sAndroid.log("SMS -> MQTT ${config.device} -> $name: ${preview(body)} ($ok/$fail remotes)")
         }
     }
 
@@ -493,7 +645,7 @@ class A8sService : LifecycleService() {
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 A8sAndroid.log("Network Available")
-                handler.post { connect() }
+                handler.post { connectAll() }
             }
         }
         cm.registerNetworkCallback(request, cb)

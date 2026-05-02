@@ -62,8 +62,10 @@ fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
         if (from !in config.phonebook.keys) {
             return MqttRoute.Drop("from=$from not in phonebook (sender unauthorized for forward)")
         }
-        val smsBody = if (from.isNotEmpty()) "$from: $content" else content
-        return MqttRoute.Forward(forward, smsBody)
+        // The device is an opaque routing surface — the SMS body is the
+        // bare content. A connector agent on the cluster handles
+        // multi-agent multiplexing; the operator sees a seamless thread.
+        return MqttRoute.Forward(forward, content)
     }
 
     val number = config.phonebook[to]

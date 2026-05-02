@@ -56,21 +56,27 @@ class A8sAndroid : Application() {
                         phonebookMap[name] = phonebookJson.getString(name)
                     }
 
-                    val remoteJson = json.getJSONObject("remote")
-                    val remote = RemoteConfig(
-                        url = remoteJson.getString("url"),
-                        topic = remoteJson.getString("topic"),
-                        username = remoteJson.optString("username", ""),
-                        password = remoteJson.optString("password", "")
-                    )
+                    val remotes = Network.parseRemotes(json)
+                    if (remotes.isEmpty()) {
+                        log("Config error: no remotes (need 'remotes' map or legacy 'remote' object)")
+                        return false
+                    }
+                    val services = try {
+                        Network.parseServices(json)
+                    } catch (e: Exception) {
+                        log("Storage services skipped: ${e.message}")
+                        emptyList()
+                    }
 
-                    config = Config(device, forward, owner, phonebookMap, remote)
+                    config = Config(device, forward, owner, phonebookMap, remotes, services)
                     saveUri(context, targetUri)
                     log(
                         "Config loaded: device=$device, " +
                             "forward=${forward ?: "(none)"}, " +
                             "owner=${owner ?: "(none)"}, " +
-                            "phonebook=${phonebookMap.size}"
+                            "phonebook=${phonebookMap.size}, " +
+                            "remotes=${remotes.size}, " +
+                            "services=${services.size}"
                     )
                     return true
                 }
@@ -97,14 +103,8 @@ class A8sAndroid : Application() {
         val forward: String?,
         val owner: String?,
         val phonebook: Map<String, String>,
-        val remote: RemoteConfig
-    )
-
-    data class RemoteConfig(
-        val url: String,
-        val topic: String,
-        val username: String,
-        val password: String
+        val remotes: Map<String, RemoteConfig>,
+        val services: List<StorageService>,
     )
 
     override fun onCreate() {
