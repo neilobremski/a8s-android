@@ -9,10 +9,12 @@ class MqttRouteTest {
     private fun config(
         device: String = "my-phone",
         forward: String? = "+15550001111",
+        owner: String? = null,
         phonebook: Map<String, String> = mapOf("Clover" to "+15550001111"),
     ): A8sAndroid.Config = A8sAndroid.Config(
         device = device,
         forward = forward,
+        owner = owner,
         phonebook = phonebook,
         remote = A8sAndroid.RemoteConfig(
             url = "ssl://broker:8883",
@@ -121,5 +123,75 @@ class MqttRouteTest {
         val payload = """{"to":"Clover","from":"gerry","content":"present","body":"WRONG"}"""
         val r = decideRoute(payload, config())
         assertEquals(MqttRoute.Phonebook("Clover", "+15550001111", "present"), r)
+    }
+
+    // ---------- /command routing (owner) ----------
+
+    @Test
+    fun `slash command from owner produces Command route`() {
+        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Neil","content":"/info"}"""
+        val r = decideRoute(payload, cfg)
+        assertEquals(MqttRoute.Command("Neil", "info", emptyList()), r)
+    }
+
+    @Test
+    fun `slash command parses args`() {
+        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Neil","content":"/logs 100"}"""
+        val r = decideRoute(payload, cfg)
+        assertEquals(MqttRoute.Command("Neil", "logs", listOf("100")), r)
+    }
+
+    @Test
+    fun `slash command from non-owner does not bypass phonebook gate`() {
+        // Non-owner sending a slash isn't a command — falls through to
+        // Forward path with sender verification. Stranger isn't in the
+        // phonebook, so it drops.
+        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"stranger","content":"/info"}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Drop)
+        assertTrue((r as MqttRoute.Drop).reason.contains("not in phonebook"))
+    }
+
+    @Test
+    fun `non-slash content from owner takes the forward path`() {
+        // Owner can still send regular forward messages — only content
+        // beginning with / is treated as a command.
+        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Neil","content":"hello"}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Forward)
+        assertEquals(MqttRoute.Forward("+15550001111", "Neil: hello"), r)
+    }
+
+    @Test
+    fun `slash command requires owner configured`() {
+        // Without owner, /info from anyone hits the forward path's
+        // sender-verification (must be in phonebook) — Neil happens to
+        // be in the phonebook, so this is treated as a forwarded SMS
+        // body that starts with a slash, not as a command.
+        val cfg = config(owner = null, phonebook = mapOf("Neil" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Neil","content":"/info"}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Forward)
+    }
+
+    @Test
+    fun `command verb is lowercased`() {
+        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Neil","content":"/INFO"}"""
+        val r = decideRoute(payload, cfg)
+        assertEquals(MqttRoute.Command("Neil", "info", emptyList()), r)
+    }
+
+    @Test
+    fun `empty slash command drops`() {
+        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Neil","content":"/   "}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Drop)
+        assertTrue((r as MqttRoute.Drop).reason.contains("empty command"))
     }
 }

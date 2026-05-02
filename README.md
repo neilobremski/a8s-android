@@ -20,6 +20,7 @@ The app is configured via a JSON file with the following schema:
 {
   "device": "android-pixel-7",
   "forward": "+15550009999",
+  "owner": "Neil",
   "phonebook": {
     "Clover": "+15550001111",
     "Gerry": "+15550002222"
@@ -42,9 +43,31 @@ The app is configured via a JSON file with the following schema:
   the operator out-of-band. Replies SMS'd back into the device are routed
   via the phonebook (so the operator's number must also be in the phonebook
   under whatever participant name the cluster should see).
+- **`owner`** *(optional)* — the participant name authorized to issue
+  on-device `/commands`. When `tell <device> "/info"` is sent by `<owner>`,
+  the device runs the command locally and `tell`s the response back. Owner
+  authorization is the gate (no phonebook lookup needed for the command
+  path) — only this single name can run privileged actions on the phone.
 - **`phonebook`** — `name → phone-number` map for the SMS gateway role.
   Outbound: agents `tell <name> "..."` → SMS to that number. Inbound: SMS
   from a known number publishes back to MQTT as that name.
+
+### Slash commands (owner-only)
+
+When `owner` is set in the config, the named participant can send
+`tell <device> "/<command> [args]"` and the device executes it locally.
+Responses come back as `tell <owner> "..."` over MQTT.
+
+| Command | Description |
+|---|---|
+| `/info` | App version, device model, Android release, MQTT state, network type, battery, uptime, config summary. |
+| `/logs [N]` | Last `N` lines of the in-app log buffer (default 50, max 500). |
+| `/<unknown>` | Replies with the list of known commands. |
+
+The slash-command path bypasses the phonebook gate the forward path
+uses — `from == owner` *is* the authorization. Non-owner senders that
+happen to send a slash-prefixed message fall through to the regular
+forward path, which still requires phonebook membership.
 
 ## Persistence — does it keep running with the screen off?
 
