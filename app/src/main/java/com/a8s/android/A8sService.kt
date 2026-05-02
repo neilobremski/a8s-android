@@ -259,15 +259,24 @@ class A8sService : LifecycleService() {
 
     private fun executeCommand(cmd: MqttRoute.Command) {
         val config = A8sAndroid.config ?: return
-        // /update and /screenshot do HTTP + filesystem work. Run them on
-        // worker threads so we don't block paho's network thread; the
-        // reply arrives whenever it's ready.
-        if (cmd.name == "update") {
-            Thread { runUpdateCommand(config, cmd) }.start()
-            return
+        // Anything that does camera, network, or potentially-slow IO runs
+        // on a fresh worker thread so paho's network thread isn't blocked;
+        // the reply lands whenever the handler finishes.
+        val async: ((A8sAndroid.Config, MqttRoute.Command) -> Unit)? = when (cmd.name) {
+            "update" -> ::runUpdateCommand
+            "screenshot" -> ::runScreenshotCommand
+            "photo" -> { c, k -> CmdPhoto.run(this, c, k) }
+            "video" -> { c, k -> CmdVideo.run(this, c, k) }
+            "location" -> { c, k -> CmdLocation.run(this, c, k) }
+            "say" -> { c, k -> CmdSay.run(this, c, k) }
+            "notify" -> { c, k -> CmdNotify.run(this, c, k) }
+            "ls" -> { c, k -> CmdLs.run(this, c, k) }
+            "cat" -> { c, k -> CmdCat.run(this, c, k) }
+            "rm" -> { c, k -> CmdRm.run(this, c, k) }
+            else -> null
         }
-        if (cmd.name == "screenshot") {
-            Thread { runScreenshotCommand(config, cmd) }.start()
+        if (async != null) {
+            Thread { async(config, cmd) }.start()
             return
         }
         val reply = when (cmd.name) {
@@ -276,6 +285,20 @@ class A8sService : LifecycleService() {
             else -> Commands.renderUnknown(cmd.name)
         }
         publishToOwner(config, cmd.owner, reply)
+    }
+
+    /**
+     * Public wrapper around `publishToOwner` for the `Cmd*` handlers.
+     * They live in their own files but need to send replies through
+     * the same wire-format / storage-upload path as everything else.
+     */
+    fun replyToOwner(
+        config: A8sAndroid.Config,
+        owner: String,
+        body: String,
+        files: List<File> = emptyList(),
+    ) {
+        publishToOwner(config, owner, body, files)
     }
 
     /** Called from MainActivity after the user grants screen-capture
@@ -291,8 +314,10 @@ class A8sService : LifecycleService() {
         if (data == null || projectionResultCode == 0) {
             publishToOwner(
                 config, cmd.owner,
-                "Screen capture not authorized. Open the app and tap " +
-                    "\"Enable Screen Capture (for /screenshot)\".",
+                "Screen capture not authorized — consent is held in-memory and " +
+                    "is lost on app/process restart (e.g. after /update reinstall). " +
+                    "Open the app and tap \"Grant All Permissions\" (or " +
+                    "\"Enable Screen Capture (for /screenshot)\") to re-grant.",
             )
             return
         }
@@ -468,7 +493,7 @@ class A8sService : LifecycleService() {
         val (ok, fail) = publishToAllRemotes(config, payload)
         A8sAndroid.log(
             "CMD -> MQTT ${config.device} -> $owner " +
-                "(${body.length} chars, ${files.size} file(s); $ok/$fail remotes)",
+                "(${body.length} chars, ${files.size} file(s); ${ok}/${ok + fail} remotes)",
         )
     }
 
@@ -624,7 +649,10 @@ class A8sService : LifecycleService() {
                 put("files", org.json.JSONArray())
             }.toString()
             val (ok, fail) = publishToAllRemotes(config, payload)
-            A8sAndroid.log("SMS -> MQTT ${config.device} -> $name: ${preview(body)} ($ok/$fail remotes)")
+            A8sAndroid.log(
+                "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
+                    "(${ok}/${ok + fail} remotes)",
+            )
         }
     }
 

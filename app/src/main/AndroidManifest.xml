@@ -54,6 +54,27 @@
          lifetime. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
+    <!-- /photo, /video — Camera2 capture from the foreground service. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+    <!-- /video, future audio capture — record audio alongside video. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- /location — one-shot fix via FusedLocationProvider (if available)
+         or LocationManager fallback. Coarse alone is enough for an
+         approximate fix; fine is requested for higher accuracy. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- Scoped media access (API 33+) for /ls and /cat over media
+         directories. We deliberately skip WRITE_EXTERNAL_STORAGE
+         (deprecated) — file writes use cacheDir / app-specific dirs. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
     <application
         android:name=".A8sAndroid"
         android:allowBackup="true"
@@ -76,7 +97,7 @@
             android:name=".A8sService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|mediaProjection" />
+            android:foregroundServiceType="connectedDevice|mediaProjection|microphone|camera|location" />
 
         <receiver
             android:name=".BootReceiver"

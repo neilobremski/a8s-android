@@ -1,0 +1,197 @@
+package com.a8s.android
+
+/**
+ * Pure-Kotlin helpers for the device-capability slash commands
+ * (`/photo`, `/video`, `/location`, `/say`, `/notify`, `/ls`, `/cat`,
+ * `/rm`). Argument parsing and response formatting live here so they
+ * can be unit-tested without an Android Context — same pattern as
+ * `Commands.renderInfo` taking an `InfoSnapshot`.
+ *
+ * Anything that needs Camera2, MediaRecorder, LocationManager,
+ * TextToSpeech, NotificationManager, or filesystem IO lives in the
+ * matching `Cmd<Name>.kt` and is invoked from `A8sService`.
+ */
+object CmdHelpers {
+
+    // ── /photo ────────────────────────────────────────────────────────────
+
+    enum class CameraFacing { FRONT, BACK }
+
+    /**
+     * `args[0]` may be "front" / "back" (case-insensitive) — anything else
+     * (or omitted) defaults to BACK.
+     */
+    fun parsePhotoFacing(args: List<String>): CameraFacing {
+        val first = args.firstOrNull()?.lowercase()?.trim().orEmpty()
+        return if (first == "front") CameraFacing.FRONT else CameraFacing.BACK
+    }
+
+    // ── /video ────────────────────────────────────────────────────────────
+
+    const val VIDEO_DEFAULT_SECONDS: Int = 10
+    const val VIDEO_MAX_SECONDS: Int = 30
+
+    /**
+     * `args[0]` is an integer count of seconds; clamped to [1, 30].
+     * Garbage / missing falls back to the 10s default.
+     */
+    fun parseVideoSeconds(args: List<String>): Int {
+        val raw = args.firstOrNull()?.toIntOrNull() ?: VIDEO_DEFAULT_SECONDS
+        return raw.coerceIn(1, VIDEO_MAX_SECONDS)
+    }
+
+    // ── /location ─────────────────────────────────────────────────────────
+
+    data class LocationSnapshot(
+        val latitude: Double,
+        val longitude: Double,
+        val accuracyMeters: Float?,
+        val ageMs: Long,
+        val provider: String,
+    )
+
+    /**
+     * Plain-text response per the spec:
+     * `lat=… lng=… accuracy=…m age=… provider=…`
+     */
+    fun renderLocation(s: LocationSnapshot): String {
+        val acc = s.accuracyMeters?.let { "%.1f".format(it) } ?: "?"
+        return "lat=${"%.6f".format(s.latitude)} " +
+            "lng=${"%.6f".format(s.longitude)} " +
+            "accuracy=${acc}m " +
+            "age=${formatAge(s.ageMs)} " +
+            "provider=${s.provider}"
+    }
+
+    /** Short, human-readable age (seconds → minutes → hours). */
+    fun formatAge(ms: Long): String {
+        if (ms < 0) return "?"
+        val secs = ms / 1000
+        return when {
+            secs < 60 -> "${secs}s"
+            secs < 3600 -> "${secs / 60}m"
+            else -> "${secs / 3600}h${(secs % 3600) / 60}m"
+        }
+    }
+
+    // ── /say ──────────────────────────────────────────────────────────────
+
+    /**
+     * Re-join the trailing args as the text to speak. Empty input
+     * returns null so the handler can reply with a usage hint.
+     */
+    fun parseSayText(args: List<String>): String? {
+        val text = args.joinToString(" ").trim()
+        return text.ifEmpty { null }
+    }
+
+    // ── /notify ───────────────────────────────────────────────────────────
+
+    data class NotifyParts(val title: String, val body: String)
+
+    /**
+     * `<title>|<body>`. Args are re-joined, then split on the first `|`.
+     * No pipe → entire input becomes the body, title defaults to
+     * "a8s". Blank body returns null.
+     */
+    fun parseNotifyArgs(args: List<String>, defaultTitle: String = "a8s"): NotifyParts? {
+        val joined = args.joinToString(" ").trim()
+        if (joined.isEmpty()) return null
+        val pipe = joined.indexOf('|')
+        return if (pipe < 0) {
+            NotifyParts(defaultTitle, joined)
+        } else {
+            val title = joined.substring(0, pipe).trim().ifEmpty { defaultTitle }
+            val body = joined.substring(pipe + 1).trim()
+            if (body.isEmpty()) null else NotifyParts(title, body)
+        }
+    }
+
+    // ── /ls ───────────────────────────────────────────────────────────────
+
+    const val LS_DEFAULT_PATH: String = "/sdcard/Download"
+
+    data class LsEntry(
+        val name: String,
+        val size: Long,
+        val lastModifiedMs: Long,
+        val isDirectory: Boolean,
+    )
+
+    /**
+     * Listing format: header line with the absolute path, then one
+     * row per entry — `<type> <size>  <mtime>  <name>`. Sorted with
+     * directories first, then by name. ISO-8601-ish mtime (UTC) so
+     * the output is stable regardless of locale.
+     */
+    fun renderLs(absolutePath: String, entries: List<LsEntry>): String {
+        val sorted = entries.sortedWith(
+            compareByDescending<LsEntry> { it.isDirectory }.thenBy { it.name },
+        )
+        val header = "$absolutePath (${sorted.size} entries)"
+        if (sorted.isEmpty()) return header
+        val rows = sorted.joinToString("\n") { e ->
+            val type = if (e.isDirectory) "d" else "f"
+            val sizeStr = if (e.isDirectory) "-" else humanSize(e.size)
+            "$type ${sizeStr.padStart(9)}  ${formatMtimeUtc(e.lastModifiedMs)}  ${e.name}"
+        }
+        return "$header\n$rows"
+    }
+
+    /** Used for both /ls rows and /cat size in the inline-vs-attachment branch. */
+    fun humanSize(bytes: Long): String {
+        if (bytes < 1024) return "${bytes}B"
+        val units = listOf("KB", "MB", "GB", "TB")
+        var v = bytes.toDouble() / 1024.0
+        var i = 0
+        while (v >= 1024.0 && i < units.lastIndex) { v /= 1024.0; i++ }
+        return "%.1f%s".format(v, units[i])
+    }
+
+    private fun formatMtimeUtc(ms: Long): String {
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm'Z'", java.util.Locale.US)
+        sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        return sdf.format(java.util.Date(ms))
+    }
+
+    // ── /cat ──────────────────────────────────────────────────────────────
+
+    /** Files <= this many bytes are returned inline; larger files attach. */
+    const val CAT_INLINE_LIMIT_BYTES: Long = 10_000
+
+    /**
+     * Heuristic: if any of the first N bytes is a NUL or otherwise
+     * non-printable + non-whitespace, treat as binary. Used to decide
+     * whether the inline branch is even safe to take.
+     */
+    fun looksLikeText(sample: ByteArray): Boolean {
+        if (sample.isEmpty()) return true
+        for (b in sample) {
+            val c = b.toInt() and 0xFF
+            if (c == 0) return false
+            if (c >= 0x20) continue
+            // Allowed control bytes: tab, newline, carriage return.
+            val isWhitespace = c == 0x09 || c == 0x0A || c == 0x0D
+            if (!isWhitespace) return false
+        }
+        return true
+    }
+
+    // ── /<unknown> ───────────────────────────────────────────────────────
+
+    /** Single source of truth for the `known commands` listing. */
+    val KNOWN_COMMANDS: List<String> = listOf(
+        "/info",
+        "/logs [N]",
+        "/update [--check|<url>]",
+        "/screenshot",
+        "/photo [front|back]",
+        "/video [seconds]",
+        "/location",
+        "/say <text>",
+        "/notify <title>|<body>",
+        "/ls [<path>]",
+        "/cat <path>",
+        "/rm <path>",
+    )
+}

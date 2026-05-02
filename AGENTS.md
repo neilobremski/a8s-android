@@ -36,7 +36,16 @@ cluster to a phone. Acts as a participant on the MQTT topic and:
 | `PublishDedup.kt` | Bounded LRU keyed on `<recipient>\|<body>`, default 5-minute window / 100 entries. Stops the duplicate-publish bug from Google Messages re-posting notifications. |
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
 | `Updater.kt` | `/update` plumbing — fetches GitHub Releases JSON, picks the `a8s-android-*-debug.apk` asset, downloads it, and `compareVersions` to decide if newer. The actual install kicks off via `ACTION_VIEW` + FileProvider in `A8sService.triggerInstallPrompt`. JSON parsing + version compare are unit-tested; HTTP and FileProvider sit in thin Android-only wrappers. |
-| `Screenshot.kt` | `/screenshot` plumbing — `MediaProjection` + `ImageReader` + `VirtualDisplay` to grab one frame, write as PNG. The user grants projection consent once via the **Enable Screen Capture** button in MainActivity; the `(resultCode, Intent)` pair is held in the service for the lifetime of the process. Each `/screenshot` builds a fresh `MediaProjection` from the cached consent, captures + releases to keep the OS's media-projection notification quiet between shots. |
+| `Screenshot.kt` | `/screenshot` plumbing — `MediaProjection` + `ImageReader` + `VirtualDisplay` to grab one frame, write as PNG. The user grants projection consent once via the **Enable Screen Capture** button in MainActivity; the `(resultCode, Intent)` pair is held in the service for the lifetime of the process. Each `/screenshot` builds a fresh `MediaProjection` from the cached consent, captures + releases to keep the OS's media-projection notification quiet between shots. **Consent is in-memory only and lost on process restart** (e.g. after `/update` reinstalls the app). The "Grant All Permissions" button in MainActivity re-fires the projection-consent dialog so it's bundled into one tap with the other dangerous-perm grants. |
+| `CmdHelpers.kt` | Pure-Kotlin parsing + formatters for `/photo`, `/video`, `/location`, `/say`, `/notify`, `/ls`, `/cat`. `KNOWN_COMMANDS` is the single source of truth for the `unknown command` listing. Unit-tested in `CmdHelpersTest`. |
+| `CmdPhoto.kt` | `/photo [front\|back]` — Camera2 still capture on a per-call HandlerThread. Saves JPEG to `cacheDir/photos/photo-<ts>.jpg`, replies via `replyToOwner(... files=...)`. |
+| `CmdVideo.kt` | `/video [seconds]` — Camera2 + MediaRecorder MP4 capture. Default 10s, hard-capped at 30s. Saves to `cacheDir/videos/`. Audio source = camcorder; H264/AAC at 720p/4Mbps. |
+| `CmdLocation.kt` | `/location` — best-effort one-shot fix. Tries FusedLocationProviderClient via reflection (so we don't pull in `play-services-location`); falls back to `LocationManager` GPS + NETWORK with a 30s timeout. |
+| `CmdSay.kt` | `/say <text>` — TextToSpeech lifecycle (init → speak → wait via `UtteranceProgressListener` → shutdown). Blocks the worker thread until playback completes so the reply (`Spoke: …`) reflects completion. |
+| `CmdNotify.kt` | `/notify <title>\|<body>` — posts a NotificationCompat.BigTextStyle notification. IDs auto-increment so notifications stack rather than replace. |
+| `CmdLs.kt` | `/ls [<path>]` — directory listing rendered by `CmdHelpers.renderLs`. Default path is `/sdcard/Download`. |
+| `CmdCat.kt` | `/cat <path>` — reads file. Text files <= 10 KB return inline; binary or larger files attach via `replyToOwner(files=...)` (uses the configured storage service path). |
+| `CmdRm.kt` | `/rm <path>` — deletes a file or empty directory. Refuses to recurse into non-empty dirs. |
 | `RemoteConfig.kt` | One MQTT remote (transport, broker, topic, username, password). |
 | `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — turns the JSON config into typed `Map<String, RemoteConfig>` + `List<StorageService>`. Accepts both new (`remotes` map) and legacy (singular `remote` block) shapes; rejects unknown spec keys to fail loud on typos. |
 | `StorageService.kt` | Interface for cross-cluster file backends — `store(file): URL`, `retrieve(url, dest): Bool`. Stateless. |
@@ -155,7 +164,11 @@ in-place `/update` not require the user to rewrite the config first.
 | `POST_NOTIFICATIONS` | foreground service notification on API 33+ | runtime prompt (gated on `>= TIRAMISU`) |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | RCS interception | special — Settings → Notification access (manifest declares it; the **Open Notification Access** button in MainActivity opens the page) |
 | `REQUEST_INSTALL_PACKAGES` | `/update` command shows the system install dialog | manifest only — but user must enable **Settings → Apps → a8s Android → Install unknown apps → Allow from this source** once before the dialog will actually install. Without that toggle the prompt appears and is then blocked. |
-| `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `WAKE_LOCK`, `FOREGROUND_SERVICE*`, `RECEIVE_BOOT_COMPLETED`, `SCHEDULE_EXACT_ALARM`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | normal/special — implicit at install | n/a |
+| `CAMERA` | `/photo`, `/video` | runtime prompt (added in 1.12.0) |
+| `RECORD_AUDIO` | `/video` audio track (and future mic capture) | runtime prompt |
+| `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` | `/location` | runtime prompt |
+| `READ_MEDIA_IMAGES` / `READ_MEDIA_AUDIO` | scoped media access for `/ls` and `/cat` (API 33+) | runtime prompt |
+| `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `WAKE_LOCK`, `FOREGROUND_SERVICE*` (incl. `_CAMERA`/`_MICROPHONE`/`_LOCATION`), `RECEIVE_BOOT_COMPLETED`, `SCHEDULE_EXACT_ALARM`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | normal/special — implicit at install | n/a |
 
 Runtime perms are requested as a single batch in `MainActivity.requestMissingPermissions()` (a `RequestMultiplePermissions` launcher). `onResume` re-checks both the dangerous perms and the notification-listener flag so returning from Settings updates the status panel.
 

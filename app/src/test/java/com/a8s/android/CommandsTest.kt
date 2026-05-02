@@ -138,5 +138,13 @@ class CommandsTest {
         assertTrue(out.contains("/logs"))
         assertTrue(out.contains("/update"))
         assertTrue(out.contains("/screenshot"))
+        assertTrue(out.contains("/photo"))
+        assertTrue(out.contains("/video"))
+        assertTrue(out.contains("/location"))
+        assertTrue(out.contains("/say"))
+        assertTrue(out.contains("/notify"))
+        assertTrue(out.contains("/ls"))
+        assertTrue(out.contains("/cat"))
+        assertTrue(out.contains("/rm"))
     }
 }

@@ -75,7 +75,7 @@ object Commands {
 
     fun renderUnknown(name: String): String =
         "unknown command: /$name\n" +
-            "known: /info, /logs [N], /update [--check|<url>], /screenshot"
+            "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
 
     private fun formatDuration(ms: Long): String {
         if (ms < 0) return "unknown"

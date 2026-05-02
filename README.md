@@ -93,7 +93,15 @@ Responses come back as `tell <owner> "..."` over MQTT.
 | `/update` | Fetch the latest GitHub Release APK and trigger the system install dialog. |
 | `/update --check` | Compare the installed version to the latest release without downloading. |
 | `/update <url>` | Download + install a specific APK URL (bypasses the version comparison). |
-| `/screenshot` | Capture the phone's screen, upload via the first configured storage service, reply with `files: [{storage: [url]}]`. Requires one-time consent via the **Enable Screen Capture** button + a configured storage service. |
+| `/screenshot` | Capture the phone's screen, upload via the first configured storage service, reply with `files: [{storage: [url]}]`. Requires one-time consent via the **Enable Screen Capture** button + a configured storage service. Consent is held in-memory only — after an in-place upgrade or process restart, re-grant via the **Grant All Permissions** button. |
+| `/photo [front\|back]` | Take a JPEG via Camera2 (defaults to back). Reply attaches the file. |
+| `/video [seconds]` | Record an MP4 (default 10s, max 30s) via Camera2 + MediaRecorder. Reply attaches the file. |
+| `/location` | One-shot location fix (FusedLocationProvider if available, else `LocationManager` GPS+Network). 30s timeout. Reply: `lat=… lng=… accuracy=…m age=… provider=…`. |
+| `/say <text>` | Speak text aloud through the phone speaker via Android TTS. Reply: `Spoke: <text>` after playback finishes. |
+| `/notify <title>\|<body>` | Post a system notification on the phone. Pipe-separated; missing pipe puts the whole input in the body and titles it `a8s`. |
+| `/ls [<path>]` | List directory entries (default `/sdcard/Download`). Plain-text listing with type, size, mtime, name. |
+| `/cat <path>` | Read a file. Text files <= 10 KB are returned inline; everything else is sent as an attachment via the configured storage service. |
+| `/rm <path>` | Delete a file or empty directory (refuses to recurse into non-empty dirs). |
 | `/<unknown>` | Replies with the list of known commands. |
 
 Stock Android can't silently install APKs without device-owner setup, so
