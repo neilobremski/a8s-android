@@ -114,3 +114,15 @@ The pattern: extract pure decision logic into top-level functions like
 at `detekt.yml` in the repo root — reasonably loose defaults, tightens
 where the team has signal (e.g. `LongMethod`, `MaxLineLength`). Adjust by
 editing that file rather than disabling rules at call sites.
+
+### Versioning and releases
+
+`main` is protected. Every PR that merges into `main` must bump
+`versionName` (and ideally `versionCode`) in `app/build.gradle.kts`; the
+**Version bump check** workflow blocks the PR otherwise.
+
+When a bump merges, the **Release** workflow tags `v<versionName>`,
+builds a debug APK, and publishes a GitHub Release with the APK
+attached as `knobert-<version>-debug.apk`. If a tag for the current
+versionName already exists (e.g. force-push that didn't bump), the
+workflow no-ops rather than failing the run.

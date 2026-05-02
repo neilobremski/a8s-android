@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write   # tag + release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read versionName
+        id: ver
+        run: |
+          set -euo pipefail
+          v=$(awk -F'"' '/versionName *= *"/{print $2; exit}' app/build.gradle.kts)
+          if [ -z "$v" ]; then
+            echo "::error::could not extract versionName from app/build.gradle.kts"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v"   >> "$GITHUB_OUTPUT"
+
+      - name: Bail if tag already exists (no version bump on this push)
+        id: tag_check
+        run: |
+          set -euo pipefail
+          tag="${{ steps.ver.outputs.tag }}"
+          if git rev-parse "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "tag ${tag} already exists; skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v4
+        if: steps.tag_check.outputs.skip == 'false'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v3
+        if: steps.tag_check.outputs.skip == 'false'
+        with:
+          gradle-version: wrapper
+
+      - name: Build Debug APK
+        if: steps.tag_check.outputs.skip == 'false'
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug --stacktrace
+
+      - name: Stage APK with version in filename
+        if: steps.tag_check.outputs.skip == 'false'
+        run: |
+          mkdir -p release-stage
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             "release-stage/knobert-${{ steps.ver.outputs.version }}-debug.apk"
+
+      - name: Create tag
+        if: steps.tag_check.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Create GitHub Release
+        if: steps.tag_check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.ver.outputs.tag }}"
+          gh release create "$tag" \
+            --title "$tag" \
+            --generate-notes \
+            release-stage/*.apk
