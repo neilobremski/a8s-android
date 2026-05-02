@@ -1,6 +1,8 @@
 package com.a8s.android
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -42,6 +44,19 @@ object CmdVideo {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val seconds = CmdHelpers.parseVideoSeconds(cmd.args)
         val context: Context = service
+        // Pre-check RECORD_AUDIO. Without it, MediaRecorder happily produces
+        // a silent video — much worse than a clear error message that
+        // points at the missing permission.
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context, Manifest.permission.RECORD_AUDIO,
+            ) != PackageManager.PERMISSION_GRANTED) {
+            service.replyToOwner(
+                config, cmd.owner,
+                "Video failed: RECORD_AUDIO permission not granted. " +
+                    "Open the app and tap \"Grant All Permissions\".",
+            )
+            return
+        }
         val mgr = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
         if (mgr == null) {
             service.replyToOwner(config, cmd.owner, "Video failed: camera service unavailable")
@@ -105,7 +120,8 @@ object CmdVideo {
         val handler = p.handler
         val dest = p.dest
         val seconds = p.seconds
-        val recorder = buildRecorder(context, dest)
+        val orientation = videoOrientation(context, mgr, cameraId)
+        val recorder = buildRecorder(context, dest, orientation)
         try {
             recorder.prepare()
         } catch (e: Exception) {
@@ -196,7 +212,7 @@ object CmdVideo {
     }
 
     @Suppress("DEPRECATION")
-    private fun buildRecorder(context: Context, dest: File): MediaRecorder {
+    private fun buildRecorder(context: Context, dest: File, orientationHint: Int): MediaRecorder {
         // MediaRecorder() default constructor was deprecated in API 31 in
         // favor of the Context-taking overload; using the new one when
         // available keeps lint quiet without forcing a min-SDK bump.
@@ -205,7 +221,11 @@ object CmdVideo {
         } else {
             MediaRecorder()
         }
-        recorder.setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
+        // MIC is more universally supported than CAMCORDER — some devices
+        // route CAMCORDER through the back-mic only and produce a silent
+        // track when the front camera is in use, or fail to acquire any
+        // input at all. MIC is the default mic stream and reliable.
+        recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
         recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
         recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
         recorder.setOutputFile(dest.absolutePath)
@@ -216,6 +236,48 @@ object CmdVideo {
         recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
         recorder.setAudioEncodingBitRate(AUDIO_BITRATE)
         recorder.setAudioSamplingRate(AUDIO_SAMPLE_RATE)
+        // Write rotation metadata into the MP4 so players display the
+        // video upright. Same formula as the JPEG case: sensor offset +
+        // current device rotation, with front-camera mirror handling.
+        recorder.setOrientationHint(orientationHint)
         return recorder
+    }
+
+    /** Compute the orientation hint to embed in the MP4 so players show
+     *  the video upright. Sensor offset plus device rotation; front-
+     *  camera output is mirrored, so the formula differs.  */
+    private fun videoOrientation(context: Context, mgr: CameraManager, cameraId: String): Int {
+        val chars = try {
+            mgr.getCameraCharacteristics(cameraId)
+        } catch (_: CameraAccessException) {
+            return 0
+        }
+        val sensor = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val front = chars.get(CameraCharacteristics.LENS_FACING) ==
+            CameraCharacteristics.LENS_FACING_FRONT
+        val deviceRotation = currentDisplayRotation(context)
+        return if (front) {
+            (sensor + deviceRotation) % 360
+        } else {
+            (sensor - deviceRotation + 360) % 360
+        }
+    }
+
+    private fun currentDisplayRotation(context: Context): Int {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? android.view.WindowManager
+            ?: return 0
+        @Suppress("DEPRECATION")
+        val r = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.display?.rotation ?: Surface.ROTATION_0
+        } else {
+            wm.defaultDisplay.rotation
+        }
+        return when (r) {
+            Surface.ROTATION_0 -> 0
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
     }
 }
