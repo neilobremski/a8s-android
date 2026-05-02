@@ -113,6 +113,14 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(captureBtn)
 
+        val a11yBtn = Button(this).apply {
+            text = "Enable Accessibility Service (for /tap, /macro)"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+        root.addView(a11yBtn)
+
         configDetail = TextView(this).apply {
             textSize = 14f
             setPadding(0, 32, 0, 32)
@@ -219,6 +227,34 @@ class MainActivity : AppCompatActivity() {
         if (!isNotificationAccessGranted()) {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
+        // Accessibility access is also a special permission — can't be
+        // granted via the runtime dialog. If our service isn't enabled
+        // yet, jump to the Accessibility Settings page so it shows up
+        // in the same one-tap grant flow.
+        if (!isAccessibilityServiceEnabled()) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        // Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES is a colon-
+        // separated list of ComponentName flat-strings. We check for
+        // our service's component name; substring-match is fine since
+        // the package qualifier disambiguates against other apps' a11y
+        // services that happen to share a class simple name.
+        val flatName = "$packageName/.A11yService"
+        val expandedFlatName = "$packageName/com.a8s.android.A11yService"
+        val raw = try {
+            Settings.Secure.getString(
+                contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            )
+        } catch (_: Exception) {
+            null
+        } ?: return false
+        return raw.split(':').any { entry ->
+            entry == flatName || entry == expandedFlatName
+        }
     }
 
     private fun missingPermissions(): List<String> = requiredDangerousPermissions().filter {
@@ -303,6 +339,9 @@ class MainActivity : AppCompatActivity() {
             }
             sb.append("Notification access (RCS): ")
             sb.append(if (isNotificationAccessGranted()) "granted" else "NOT granted — tap button above")
+            sb.append("\n")
+            sb.append("Accessibility service (UI automation): ")
+            sb.append(if (isAccessibilityServiceEnabled()) "enabled" else "NOT enabled — tap button above")
             configDetail.text = sb.toString()
         }
         logText.text = A8sAndroid.getLogs()

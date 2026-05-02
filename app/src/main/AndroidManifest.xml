@@ -128,6 +128,25 @@
             </intent-filter>
         </service>
 
+        <!-- Accessibility service for /tap, /swipe, /key, /input, /find,
+             and the macro batch runner. The user must enable it manually
+             in Settings - Accessibility - accessibility access is
+             special-permission and cannot be granted via the runtime
+             permission dialog. The MainActivity "Enable Accessibility
+             Service" button jumps to that page. -->
+        <service
+            android:name=".A11yService"
+            android:exported="true"
+            android:label="a8s Automation"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
         <!-- FileProvider exposes the downloaded APK to the system installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"

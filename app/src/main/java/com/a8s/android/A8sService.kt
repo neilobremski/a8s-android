@@ -42,6 +42,32 @@ class A8sService : LifecycleService() {
 
         var instance: A8sService? = null
             private set
+
+        // Verb -> handler map. The handler receives the live service so
+        // it can call `replyToOwner` and reach the cached MediaProjection
+        // consent. Keeping the dispatch as a map (rather than a `when` in
+        // executeCommand) keeps the cyclomatic complexity below detekt's
+        // ceiling as new verbs land.
+        private val asyncCommands: Map<String, (A8sService, A8sAndroid.Config, MqttRoute.Command) -> Unit> = mapOf(
+            "update" to { s, c, k -> s.runUpdateCommand(c, k) },
+            "screenshot" to { s, c, k -> s.runScreenshotCommand(c, k) },
+            "photo" to { s, c, k -> CmdPhoto.run(s, c, k) },
+            "video" to { s, c, k -> CmdVideo.run(s, c, k) },
+            "audio" to { s, c, k -> CmdAudio.run(s, c, k) },
+            "location" to { s, c, k -> CmdLocation.run(s, c, k) },
+            "say" to { s, c, k -> CmdSay.run(s, c, k) },
+            "notify" to { s, c, k -> CmdNotify.run(s, c, k) },
+            "ls" to { s, c, k -> CmdLs.run(s, c, k) },
+            "cat" to { s, c, k -> CmdCat.run(s, c, k) },
+            "rm" to { s, c, k -> CmdRm.run(s, c, k) },
+            "tap" to { s, c, k -> CmdTap.run(s, c, k) },
+            "longtap" to { s, c, k -> CmdLongtap.run(s, c, k) },
+            "swipe" to { s, c, k -> CmdSwipe.run(s, c, k) },
+            "key" to { s, c, k -> CmdKey.run(s, c, k) },
+            "input" to { s, c, k -> CmdInput.run(s, c, k) },
+            "find" to { s, c, k -> CmdFind.run(s, c, k) },
+            "macro" to { s, c, k -> CmdMacro.run(s, c, k) },
+        )
     }
 
     private val smsRequestSeq = java.util.concurrent.atomic.AtomicInteger(0)
@@ -262,22 +288,9 @@ class A8sService : LifecycleService() {
         // Anything that does camera, network, or potentially-slow IO runs
         // on a fresh worker thread so paho's network thread isn't blocked;
         // the reply lands whenever the handler finishes.
-        val async: ((A8sAndroid.Config, MqttRoute.Command) -> Unit)? = when (cmd.name) {
-            "update" -> ::runUpdateCommand
-            "screenshot" -> ::runScreenshotCommand
-            "photo" -> { c, k -> CmdPhoto.run(this, c, k) }
-            "video" -> { c, k -> CmdVideo.run(this, c, k) }
-            "audio" -> { c, k -> CmdAudio.run(this, c, k) }
-            "location" -> { c, k -> CmdLocation.run(this, c, k) }
-            "say" -> { c, k -> CmdSay.run(this, c, k) }
-            "notify" -> { c, k -> CmdNotify.run(this, c, k) }
-            "ls" -> { c, k -> CmdLs.run(this, c, k) }
-            "cat" -> { c, k -> CmdCat.run(this, c, k) }
-            "rm" -> { c, k -> CmdRm.run(this, c, k) }
-            else -> null
-        }
+        val async = asyncCommands[cmd.name]
         if (async != null) {
-            Thread { async(config, cmd) }.start()
+            Thread { async(this, config, cmd) }.start()
             return
         }
         val reply = when (cmd.name) {
@@ -308,6 +321,48 @@ class A8sService : LifecycleService() {
     fun setProjectionConsent(resultCode: Int, data: Intent) {
         projectionResultCode = resultCode
         projectionData = data
+    }
+
+    /** True when the user has granted MediaProjection consent in the
+     *  current process lifetime. The macro/UI-automation paths use this
+     *  to fail-fast before doing any other setup. */
+    fun hasProjectionConsent(): Boolean =
+        projectionData != null && projectionResultCode != 0
+
+    /** One-shot PNG capture for the macro / accessibility commands.
+     *  Builds a fresh MediaProjection from the cached consent, captures
+     *  one frame to `dest`, releases the projection. Returns true on
+     *  success. Caller is responsible for already verifying consent
+     *  exists via `hasProjectionConsent()`. */
+    fun captureScreenshotPng(dest: File): Boolean {
+        val data = projectionData ?: return false
+        if (projectionResultCode == 0) return false
+        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        var projection: MediaProjection? = null
+        return try {
+            projection = mgr.getMediaProjection(projectionResultCode, data) ?: return false
+            Screenshot(this, projection).capture(dest)
+        } catch (e: Exception) {
+            A8sAndroid.log("captureScreenshotPng failed: ${e.message}")
+            false
+        } finally {
+            try { projection?.stop() } catch (_: Exception) { }
+        }
+    }
+
+    /** Build a fresh MediaProjection for callers that need to drive a
+     *  longer-lived VirtualDisplay (e.g. CmdMacro's screen recorder).
+     *  Caller owns the lifecycle — must call `stop()` when done. */
+    fun acquireMediaProjection(): MediaProjection? {
+        val data = projectionData ?: return null
+        if (projectionResultCode == 0) return null
+        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        return try {
+            mgr.getMediaProjection(projectionResultCode, data)
+        } catch (e: Exception) {
+            A8sAndroid.log("acquireMediaProjection failed: ${e.message}")
+            null
+        }
     }
 
     private fun runScreenshotCommand(config: A8sAndroid.Config, cmd: MqttRoute.Command) {

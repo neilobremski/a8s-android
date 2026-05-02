@@ -210,5 +210,12 @@ object CmdHelpers {
         "/ls [<path>]",
         "/cat <path>",
         "/rm <path>",
+        "/tap x y",
+        "/longtap x y [ms]",
+        "/swipe x1 y1 x2 y2 [ms]",
+        "/key <NAME>",
+        "/input <text>",
+        "/find <label>",
+        "/macro <step>|<step>|…",
     )
 }
