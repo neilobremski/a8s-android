@@ -9,26 +9,38 @@ import org.junit.jupiter.api.Test
 class TempFileOrgServiceTest {
 
     @Test
-    fun `parseUploadUrl extracts JSON url field`() {
-        val body = """{"id":"abc","url":"https://tempfile.org/d/abc","ok":true}"""
-        assertEquals("https://tempfile.org/d/abc", TempFileOrgService.parseUploadUrl(body))
+    fun `parseUploadUrl extracts files-zero-url`() {
+        // Real tempfile.org response shape — the URL lives at
+        // `files[0].url`, not at the top level.
+        val body = """{"files":[
+          {"id":"abc","name":"x.png","size":1234,
+           "url":"https://tempfile.org/abc/","expiryTime":"..."}
+        ]}"""
+        assertEquals("https://tempfile.org/abc/", TempFileOrgService.parseUploadUrl(body))
     }
 
     @Test
-    fun `parseUploadUrl falls back to first URL in body`() {
-        val body = """OK https://tempfile.org/d/foo successfully uploaded"""
-        assertEquals("https://tempfile.org/d/foo", TempFileOrgService.parseUploadUrl(body))
+    fun `parseUploadUrl picks first when multiple files`() {
+        val body = """{"files":[
+          {"url":"https://tempfile.org/a/"},
+          {"url":"https://tempfile.org/b/"}
+        ]}"""
+        assertEquals("https://tempfile.org/a/", TempFileOrgService.parseUploadUrl(body))
     }
 
     @Test
-    fun `parseUploadUrl returns null when no URL`() {
-        assertNull(TempFileOrgService.parseUploadUrl("error: invalid request"))
+    fun `parseUploadUrl returns null when files array empty`() {
+        assertNull(TempFileOrgService.parseUploadUrl("""{"files":[]}"""))
     }
 
     @Test
-    fun `parseUploadUrl handles single quotes`() {
-        val body = """{'url': 'https://tempfile.org/d/x'}"""
-        assertEquals("https://tempfile.org/d/x", TempFileOrgService.parseUploadUrl(body))
+    fun `parseUploadUrl returns null when no files key`() {
+        assertNull(TempFileOrgService.parseUploadUrl("""{"error":"bad request"}"""))
+    }
+
+    @Test
+    fun `parseUploadUrl returns null on invalid JSON`() {
+        assertNull(TempFileOrgService.parseUploadUrl("not json"))
     }
 
     @Test

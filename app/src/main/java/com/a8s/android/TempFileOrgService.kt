@@ -10,13 +10,15 @@ import java.nio.charset.StandardCharsets
 /**
  * TempFile.org backend. Pure stdlib HTTP — no third-party deps.
  *
- * Endpoints mirror the Python `services/tempfile_org.py` contract:
- *   - POST `<base>/api/upload/local` (multipart/form-data, `file` part,
- *     `expirable` / `expiry_seconds`, depending on what the API
- *     accepts; we send `Hours` because the public form uses it).
- *     Response is JSON containing the public URL.
- *   - GET  `<retrieved-url>download`  (i.e. append `download` to the
- *     short URL returned at upload time) — body is the raw file bytes.
+ * Wire format matches the Python `apps/a8s/services/tempfile_org.py`
+ * upstream:
+ *
+ *   POST `<base>/api/upload/local`  multipart/form-data
+ *     fields: `files=<binary>` (note: plural), `expiryHours=<1|6|24|48>`
+ *     response: `{"files":[{"id","name","size","url","expiryTime"}, ...]}`
+ *               where `files[0].url` is e.g. `https://tempfile.org/<id>/`
+ *
+ *   GET `<returned-url>download`     streams the bytes
  *
  * Per-file size cap matches the existing local-only `MAX_FILE_BYTES`
  * (50 MiB) so we don't accidentally upload something the upstream
@@ -53,10 +55,11 @@ class TempFileOrgService(
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
             setRequestProperty("User-Agent", "a8s-android")
         }
+        conn.setRequestProperty("Accept", "application/json")
         try {
             DataOutputStream(conn.outputStream).use { out ->
-                writePart(out, boundary, "Hours", expiryHours.toString())
-                writeFilePart(out, boundary, "file", file)
+                writeFilePart(out, boundary, "files", file)
+                writePart(out, boundary, "expiryHours", expiryHours.toString())
                 out.writeBytes("--$boundary--\r\n")
             }
             val rc = conn.responseCode
@@ -81,7 +84,13 @@ class TempFileOrgService(
         }
         // Only handle URLs we recognize as ours (host match).
         if (!matchesHost(parsed.host)) return false
-        val downloadUrl = if (url.endsWith("/")) "${url}download" else "$url/download"
+        // Upload returns URLs ending in `/`; the GET endpoint is `<url>download`.
+        // Tolerate either form.
+        val downloadUrl = when {
+            url.endsWith("/download") -> url
+            url.endsWith("/") -> "${url}download"
+            else -> "$url/download"
+        }
         val conn = (URL(downloadUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = timeoutS * 1000
@@ -133,18 +142,22 @@ class TempFileOrgService(
         val ALLOWED_EXPIRY: Set<Int> = setOf(1, 6, 24, 48)
 
         /** Extract the public URL from a tempfile.org upload response.
-         *  Pulled out for testability — the actual payload shape is
-         *  observed at runtime; we tolerate variations by scanning for
-         *  the first `https?://...` token that looks plausible.
-         *  Pure: no I/O, no Android. */
+         *  Pulled out for testability. Pure: no I/O, no Android.
+         *
+         *  Expected shape: `{"files":[{"url":"https://...","..."},...]}`.
+         *  The first `files[]` entry's `url` is what we want. We use
+         *  org.json (available on Android, on the test classpath via
+         *  `testImplementation org.json:json` already wired). */
         fun parseUploadUrl(body: String): String? {
-            // Try JSON `url` field first.
-            val jsonMatch = Regex("""["']url["']\s*:\s*["']([^"']+)["']""")
-                .find(body)
-            if (jsonMatch != null) return jsonMatch.groupValues[1]
-            // Fallback: any URL in the response body.
-            val urlMatch = Regex("""https?://[^\s"'<>]+""").find(body)
-            return urlMatch?.value
+            return try {
+                val obj = org.json.JSONObject(body)
+                val files = obj.optJSONArray("files") ?: return null
+                if (files.length() == 0) return null
+                val first = files.optJSONObject(0) ?: return null
+                first.optString("url").ifBlank { null }
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 }

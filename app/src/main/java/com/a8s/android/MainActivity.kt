@@ -32,6 +32,12 @@ class MainActivity : AppCompatActivity() {
             if (A8sAndroid.loadConfig(this, uri)) {
                 val app = application as A8sAndroid
                 app.startA8sService()
+                // The service may already be running with the previous
+                // config's remotes — tear those down and rebuild against
+                // the new config's `remotes` map. Otherwise inbound flows
+                // through the OLD client (still subscribed) but publishes
+                // look up the NEW remote name and find nothing.
+                A8sService.instance?.reconnectAll()
                 updateUI()
             }
         }
@@ -207,19 +213,37 @@ class MainActivity : AppCompatActivity() {
         } else {
             statusText.text = "a8s Android ${installedVersion()}\nStatus: Configured as " + config.device
             val sb = StringBuilder()
+            sb.append("Owner: ").append(config.owner ?: "(none)").append("\n")
+            sb.append("Forward: ").append(config.forward ?: "(none)").append("\n")
+            // Remotes — show first by name → broker, "+N more" if more.
             if (config.remotes.isEmpty()) {
-                sb.append("Remotes: (none configured)\n")
+                sb.append("Remote: (none configured)\n")
             } else {
-                sb.append("Remotes (").append(config.remotes.size).append("):\n")
-                for ((name, rc) in config.remotes) {
-                    sb.append("  ").append(name).append(" → ").append(rc.broker)
-                        .append(" / ").append(rc.topic).append("\n")
-                }
+                val (firstName, firstRc) = config.remotes.entries.first().toPair()
+                val rest = config.remotes.size - 1
+                sb.append("Remote: ").append(firstName).append(" → ").append(firstRc.broker)
+                if (rest > 0) sb.append(" (+").append(rest).append(" more)")
+                sb.append("\n")
             }
-            sb.append("Storage: ")
-                .append(if (config.services.isEmpty()) "(none)" else config.services.joinToString(", ") { it.id })
-                .append("\n")
-            sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)\n")
+            // Storage services — first id, "+N more" if more.
+            if (config.services.isEmpty()) {
+                sb.append("Storage: (none)\n")
+            } else {
+                sb.append("Storage: ").append(config.services.first().id)
+                val rest = config.services.size - 1
+                if (rest > 0) sb.append(" (+").append(rest).append(" more)")
+                sb.append("\n")
+            }
+            // Phonebook — first entry, "+N more" if more.
+            if (config.phonebook.isEmpty()) {
+                sb.append("Phonebook: (empty)\n")
+            } else {
+                val (firstName, firstNumber) = config.phonebook.entries.first().toPair()
+                val rest = config.phonebook.size - 1
+                sb.append("Phonebook: ").append(firstName).append(" → ").append(firstNumber)
+                if (rest > 0) sb.append(" (+").append(rest).append(" more)")
+                sb.append("\n")
+            }
             if (missing.isEmpty()) {
                 sb.append("Permissions: all granted\n")
             } else {

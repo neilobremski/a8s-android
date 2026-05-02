@@ -141,6 +141,25 @@ class A8sService : LifecycleService() {
         config.remotes.forEach { (name, rc) -> connectOne(name, rc) }
     }
 
+    /**
+     * Tear down every active client and reconnect against the current
+     * `A8sAndroid.config`. Called from `MainActivity` after the user
+     * reloads `a8s.json`. Without this, a config that renames remotes
+     * (e.g. legacy singular shape with the implicit "default" name →
+     * new shape with named entries like "hivemq") leaves the OLD
+     * subscriber alive (so inbound still works) while publishes look
+     * up the NEW name in `mqttClients` and find nothing.
+     */
+    fun reconnectAll() {
+        A8sAndroid.log("Reconnecting all remotes after config reload")
+        mqttClients.values.forEach { c ->
+            try { c.disconnect() } catch (_: Exception) { }
+            try { c.close() } catch (_: Exception) { }
+        }
+        mqttClients.clear()
+        connectAll()
+    }
+
     private fun connectOne(name: String, rc: RemoteConfig) {
         val existing = mqttClients[name]
         if (existing != null && existing.isConnected) return
