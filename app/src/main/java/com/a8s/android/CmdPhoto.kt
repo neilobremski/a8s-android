@@ -40,12 +40,12 @@ object CmdPhoto {
         val context: Context = service
         val mgr = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
         if (mgr == null) {
-            service.replyToOwner(config, cmd.owner, "Photo failed: camera service unavailable")
+            service.replyToSender(config, cmd.sender, "Photo failed: camera service unavailable")
             return
         }
         val cameraId = findCameraId(mgr, facing)
         if (cameraId == null) {
-            service.replyToOwner(config, cmd.owner, "Photo failed: no $facing camera found")
+            service.replyToSender(config, cmd.sender, "Photo failed: no $facing camera found")
             return
         }
 
@@ -57,18 +57,18 @@ object CmdPhoto {
         try {
             val ok = capture(mgr, cameraId, handler, dest, displayRotation)
             if (!ok || dest.length() == 0L) {
-                service.replyToOwner(config, cmd.owner, "Photo failed: no image captured")
+                service.replyToSender(config, cmd.sender, "Photo failed: no image captured")
                 return
             }
             A8sAndroid.log("Photo captured: ${dest.length()} bytes (${facing.name.lowercase()})")
-            service.replyToOwner(
-                config, cmd.owner,
+            service.replyToSender(
+                config, cmd.sender,
                 "Photo (${CmdHelpers.humanSize(dest.length())}, ${facing.name.lowercase()})",
                 files = listOf(dest),
             )
         } catch (e: Exception) {
             A8sAndroid.log("Photo failed: ${e.message}")
-            service.replyToOwner(config, cmd.owner, "Photo failed: ${e.message}")
+            service.replyToSender(config, cmd.sender, "Photo failed: ${e.message}")
         } finally {
             thread.quitSafely()
         }

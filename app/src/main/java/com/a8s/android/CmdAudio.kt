@@ -28,8 +28,8 @@ object CmdAudio {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            service.replyToOwner(
-                config, cmd.owner,
+            service.replyToSender(
+                config, cmd.sender,
                 "Audio failed: RECORD_AUDIO permission not granted. " +
                     "Open the app and tap \"Grant All Permissions\".",
             )
@@ -43,7 +43,7 @@ object CmdAudio {
         } catch (e: Exception) {
             A8sAndroid.log("MediaRecorder prepare failed: ${e.message}")
             recorder.release()
-            service.replyToOwner(config, cmd.owner, "Audio failed: prepare: ${e.message}")
+            service.replyToSender(config, cmd.sender, "Audio failed: prepare: ${e.message}")
             return
         }
         try {
@@ -60,12 +60,12 @@ object CmdAudio {
             try { recorder.release() } catch (_: Exception) { }
         }
         if (dest.length() == 0L) {
-            service.replyToOwner(config, cmd.owner, "Audio failed: empty output")
+            service.replyToSender(config, cmd.sender, "Audio failed: empty output")
             return
         }
         A8sAndroid.log("Audio captured: ${dest.length()} bytes (${seconds}s)")
-        service.replyToOwner(
-            config, cmd.owner,
+        service.replyToSender(
+            config, cmd.sender,
             "Audio (${CmdHelpers.humanSize(dest.length())}, ${seconds}s)",
             files = listOf(dest),
         )

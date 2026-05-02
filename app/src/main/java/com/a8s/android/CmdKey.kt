@@ -10,13 +10,13 @@ object CmdKey {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val a11y = A11yService.instance
         if (a11y == null) {
-            service.replyToOwner(config, cmd.owner, A11Y_DISABLED_MSG)
+            service.replyToSender(config, cmd.sender, A11Y_DISABLED_MSG)
             return
         }
         val name = cmd.args.firstOrNull()?.takeIf { it.isNotBlank() }
         if (name == null) {
-            service.replyToOwner(
-                config, cmd.owner,
+            service.replyToSender(
+                config, cmd.sender,
                 "Usage: /key <BACK|HOME|RECENTS|NOTIFICATIONS|QUICK_SETTINGS|LOCK_SCREEN>",
             )
             return
@@ -25,6 +25,6 @@ object CmdKey {
         Thread.sleep(POST_GESTURE_SETTLE_MS)
         val canonical = name.uppercase()
         val text = if (ok) "Sent key $canonical" else "Key failed: unknown or rejected '$name'"
-        UiActionReply.send(service, config, cmd.owner, text, "key")
+        UiActionReply.send(service, config, cmd.sender, text, "key")
     }
 }
