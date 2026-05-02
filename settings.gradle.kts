@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "knobert-phone"
+rootProject.name = "a8s-android"
 include(":app")

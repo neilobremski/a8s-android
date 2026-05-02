@@ -123,6 +123,6 @@ editing that file rather than disabling rules at call sites.
 
 When a bump merges, the **Release** workflow tags `v<versionName>`,
 builds a debug APK, and publishes a GitHub Release with the APK
-attached as `knobert-<version>-debug.apk`. If a tag for the current
+attached as `a8s-android-<version>-debug.apk`. If a tag for the current
 versionName already exists (e.g. force-push that didn't bump), the
 workflow no-ops rather than failing the run.
