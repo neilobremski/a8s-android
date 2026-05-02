@@ -48,13 +48,22 @@ The app is configured via a JSON file with the following schema:
 
 ## Setup
 
-1. **Install:** Download the latest APK from the GitHub Actions artifacts.
-2. **Grant Permissions:**
-    - SMS (Send/Receive/Read)
-    - Notifications (for Foreground Service)
-    - **Notification Access:** Manually enable in `Settings > Notifications > Notification access > a8s Android`.
-    - **Battery Optimization:** Grant exemption when prompted.
-3. **Configure:** Open the app and use the "Load Configuration" button to select your `a8s.json` file.
+1. **Install:** Download the latest APK from the
+   [Releases page](https://github.com/neilobremski/a8s-android/releases/latest)
+   (filename: `a8s-android-<version>-debug.apk`). Sideload via
+   `adb install` or copy to the device and tap to install.
+2. **Open the app and grant permissions:**
+   - On first launch, the app prompts for SMS (send/receive/read), phone
+     state, and notifications. Grant all — denying any disables the
+     corresponding direction of traffic.
+   - Tap **Open Notification Access (for RCS)** to enable Google Messages
+     interception in `Settings > Notifications > Notification access`.
+     This is a special permission that can't be requested via the
+     standard runtime dialog.
+   - **Battery Optimization** exemption is requested automatically.
+3. **Configure:** Use the **Load Configuration JSON** button to select
+   your `a8s.json` file. The status panel shows what's granted, what's
+   missing, and the device's a8s identity once configured.
 
 ## Development
 
