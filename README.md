@@ -126,3 +126,22 @@ builds a debug APK, and publishes a GitHub Release with the APK
 attached as `a8s-android-<version>-debug.apk`. If a tag for the current
 versionName already exists (e.g. force-push that didn't bump), the
 workflow no-ops rather than failing the run.
+
+### Signing key (debug, stable)
+
+Debug APKs are signed with a single keystore committed at
+`app/debug.keystore` (alias `androiddebugkey`, password `android`). This
+exists so consecutive builds on different machines and CI runners produce
+APKs signed with the *same* cert — without it, every release has a fresh
+auto-generated debug cert and Android refuses upgrade-in-place with
+*"App not installed as package conflicts with an existing package."*
+
+This keystore is **not** for Play Store distribution; it's a sideload-only
+debug key. Anyone with the repo can sign as this cert. That's acceptable
+for a one-person internal-use app; do not adopt this pattern for anything
+public-facing.
+
+After switching to this stable key for the first time, you'll need to
+uninstall any previously-installed version once — the prior APK is signed
+with a different (per-runner) cert and Android can't replace it with the
+new one. Subsequent upgrades just work.
