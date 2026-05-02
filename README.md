@@ -64,3 +64,53 @@ Built with Kotlin and Android SDK.
 ```bash
 ./gradlew assembleDebug
 ```
+
+### Pre-push verification
+
+Before pushing, run static analysis + unit tests + a Kotlin compile:
+
+```bash
+./gradlew detekt test :app:compileDebugKotlin
+```
+
+To wire this into git so a broken branch can't be pushed:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook in `.githooks/pre-push` runs the same Gradle command and blocks the
+push on failure.
+
+### One-time toolchain setup (macOS)
+
+```bash
+brew install openjdk@17                                   # JDK
+brew install --cask android-commandlinetools              # SDK platform-tools / build-tools
+sdkmanager --licenses                                     # accept all
+sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+```
+
+Add the two `export` lines to your shell rc so future sessions inherit them.
+
+### Tests
+
+Unit tests live in `app/src/test/java/...` and run on the host JVM (no
+emulator needed). Pure Kotlin only — anything that touches the Android
+framework (Context, Intent, NotificationListener, MQTT client) stays in
+the production code paths and is exercised end-to-end via the live device.
+
+The pattern: extract pure decision logic into top-level functions like
+`decideRoute(payload, config)` and unit-test those; let the Android-side
+`A8sService` do nothing but wire IO to those decisions. See
+`MqttRoute.kt` + `MqttRouteTest.kt` for the template.
+
+### Linting
+
+[Detekt](https://detekt.dev/) runs against the app sources. Config lives
+at `detekt.yml` in the repo root — reasonably loose defaults, tightens
+where the team has signal (e.g. `LongMethod`, `MaxLineLength`). Adjust by
+editing that file rather than disabling rules at call sites.

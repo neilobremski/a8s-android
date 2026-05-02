@@ -37,6 +37,14 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+}
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
 }
 
 dependencies {
@@ -51,4 +59,10 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    // org.json is shipped with the Android runtime, so production code uses it
+    // freely. JVM unit tests don't have it on the classpath; pull in the
+    // upstream jar so `decideRoute` (and any future pure-logic test) works.
+    testImplementation("org.json:json:20240303")
 }

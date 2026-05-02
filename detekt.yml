@@ -1,0 +1,44 @@
+build:
+  maxIssues: 0
+
+complexity:
+  TooManyFunctions:
+    active: false
+  LongMethod:
+    active: true
+    threshold: 80
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 20
+  NestedBlockDepth:
+    active: false
+
+style:
+  LoopWithTooManyJumpStatements:
+    active: false
+  MagicNumber:
+    active: false
+  WildcardImport:
+    active: false
+  ReturnCount:
+    active: false
+  MaxLineLength:
+    active: true
+    maxLineLength: 140
+
+naming:
+  FunctionNaming:
+    active: true
+    # JUnit-style backtick names for tests are conventional and readable.
+    ignoreAnnotated:
+      - "org.junit.jupiter.api.Test"
+
+empty-blocks:
+  EmptyFunctionBlock:
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: false
