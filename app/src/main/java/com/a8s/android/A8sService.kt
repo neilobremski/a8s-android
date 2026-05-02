@@ -206,20 +206,35 @@ class A8sService : LifecycleService() {
             byContact
         }
 
+        // Reply destined for the cluster participant whose number we
+        // matched. The phone is acting as the device participant
+        // (config.device); the cluster sees the message as coming from
+        // it. One envelope per matched name (rare, but a phonebook can
+        // have aliases).
         matchedNames.forEach { name ->
             val payload = JSONObject().apply {
-                put("from", name)
-                put("to", "all")
-                put("body", body)
+                put("id", Ulid.new())
+                put("date", isoNowUtc())
+                put("from", config.device)
+                put("to", name)
+                put("content", body)
+                put("files", org.json.JSONArray())
             }.toString()
 
             try {
                 mqttClient?.publish(config.remote.topic, MqttMessage(payload.toByteArray()))
-                A8sAndroid.log("SMS -> MQTT from $name")
+                A8sAndroid.log("SMS -> MQTT ${config.device} -> $name")
             } catch (e: Exception) {
                 A8sAndroid.log("MQTT Publish Failed: " + e.message)
             }
         }
+    }
+
+    private fun isoNowUtc(): String {
+        // 2026-05-02T01:23:45Z — same shape as Python a8s envelopes.
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+        sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        return sdf.format(java.util.Date())
     }
 
     private fun phoneNumberForDisplayName(name: String): String? {
