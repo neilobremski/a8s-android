@@ -35,6 +35,7 @@ cluster to a phone. Acts as a participant on the MQTT topic and:
 | `Commands.kt` | Pure formatters for slash-command output. `InfoSnapshot` data class is filled in by `A8sService.snapshotInfo()` and passed to `renderInfo`. `renderLogs(logs, n)` does tail+header. Keeps Android-specific `Build`/`BatteryManager`/`ConnectivityManager` calls out of the formatter so it tests without a Context. |
 | `PublishDedup.kt` | Bounded LRU keyed on `<recipient>\|<body>`, default 5-minute window / 100 entries. Stops the duplicate-publish bug from Google Messages re-posting notifications. |
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
+| `Updater.kt` | `/update` plumbing — fetches GitHub Releases JSON, picks the `a8s-android-*-debug.apk` asset, downloads it, and `compareVersions` to decide if newer. The actual install kicks off via `ACTION_VIEW` + FileProvider in `A8sService.triggerInstallPrompt`. JSON parsing + version compare are unit-tested; HTTP and FileProvider sit in thin Android-only wrappers. |
 
 Tests under `app/src/test/java/com/a8s/android/` mirror the pure-Kotlin
 files. Anything that touches Android framework classes lives in the
@@ -124,6 +125,7 @@ contract:
 | `READ_CONTACTS` | resolve RCS notification's contact display name → phone number for the phonebook lookup | runtime prompt |
 | `POST_NOTIFICATIONS` | foreground service notification on API 33+ | runtime prompt (gated on `>= TIRAMISU`) |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | RCS interception | special — Settings → Notification access (manifest declares it; the **Open Notification Access** button in MainActivity opens the page) |
+| `REQUEST_INSTALL_PACKAGES` | `/update` command shows the system install dialog | manifest only — but user must enable **Settings → Apps → a8s Android → Install unknown apps → Allow from this source** once before the dialog will actually install. Without that toggle the prompt appears and is then blocked. |
 | `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `WAKE_LOCK`, `FOREGROUND_SERVICE*`, `RECEIVE_BOOT_COMPLETED`, `SCHEDULE_EXACT_ALARM`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | normal/special — implicit at install | n/a |
 
 Runtime perms are requested as a single batch in `MainActivity.requestMissingPermissions()` (a `RequestMultiplePermissions` launcher). `onResume` re-checks both the dangerous perms and the notification-listener flag so returning from Settings updates the status panel.

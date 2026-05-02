@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The /update command writes the downloaded APK to cacheDir/updates
+         and exposes it to the system installer via FileProvider. -->
+    <cache-path name="updates" path="updates/" />
+</paths>

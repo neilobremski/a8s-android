@@ -112,5 +112,6 @@ class CommandsTest {
         assertTrue(out.contains("/bogus"))
         assertTrue(out.contains("/info"))
         assertTrue(out.contains("/logs"))
+        assertTrue(out.contains("/update"))
     }
 }

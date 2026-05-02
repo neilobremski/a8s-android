@@ -62,7 +62,18 @@ Responses come back as `tell <owner> "..."` over MQTT.
 |---|---|
 | `/info` | App version, device model, Android release, MQTT state, network type, battery, uptime, config summary. |
 | `/logs [N]` | Last `N` lines of the in-app log buffer (default 50, max 500). |
+| `/update` | Fetch the latest GitHub Release APK and trigger the system install dialog. |
+| `/update --check` | Compare the installed version to the latest release without downloading. |
+| `/update <url>` | Download + install a specific APK URL (bypasses the version comparison). |
 | `/<unknown>` | Replies with the list of known commands. |
+
+Stock Android can't silently install APKs without device-owner setup, so
+`/update` shows the system's install confirmation on the phone screen
+and the operator taps **Install** once. Subsequent upgrades are in-place
+because every build signs with the committed `app/debug.keystore`.
+One-time setup: in **Settings → Apps → a8s Android → Install unknown
+apps**, toggle **Allow from this source** on. Without it, the install
+dialog shows but the install is blocked.
 
 The slash-command path bypasses the phonebook gate the forward path
 uses — `from == owner` *is* the authorization. Non-owner senders that
