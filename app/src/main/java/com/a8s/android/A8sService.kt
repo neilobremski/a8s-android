@@ -267,6 +267,7 @@ class A8sService : LifecycleService() {
             "screenshot" -> ::runScreenshotCommand
             "photo" -> { c, k -> CmdPhoto.run(this, c, k) }
             "video" -> { c, k -> CmdVideo.run(this, c, k) }
+            "audio" -> { c, k -> CmdAudio.run(this, c, k) }
             "location" -> { c, k -> CmdLocation.run(this, c, k) }
             "say" -> { c, k -> CmdSay.run(this, c, k) }
             "notify" -> { c, k -> CmdNotify.run(this, c, k) }

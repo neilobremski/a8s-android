@@ -10,12 +10,10 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureRequest
 import android.media.ImageReader
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Size
 import android.view.Surface
-import android.view.WindowManager
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
@@ -220,17 +218,15 @@ object CmdPhoto {
         }
     }
 
-    /** Current display rotation in degrees (0/90/180/270). Falls back
-     *  to 0 if WindowManager is unavailable (it always is on a phone). */
+    /** Current display rotation in degrees (0/90/180/270). Reads from
+     *  `DisplayManager` rather than `Context.getDisplay()` because the
+     *  service Context is not visual-associated on API 30+ — calling
+     *  Service.getDisplay() throws UnsupportedOperationException. */
     private fun currentDisplayRotation(context: Context): Int {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return 0
-        @Suppress("DEPRECATION")
-        val r = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            context.display?.rotation ?: Surface.ROTATION_0
-        } else {
-            wm.defaultDisplay.rotation
-        }
-        return surfaceRotationToDegrees(r)
+        val dm = context.getSystemService(Context.DISPLAY_SERVICE)
+            as? android.hardware.display.DisplayManager ?: return 0
+        val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return 0
+        return surfaceRotationToDegrees(display.rotation)
     }
 
     private fun surfaceRotationToDegrees(rotation: Int): Int = when (rotation) {
