@@ -16,7 +16,10 @@ class SmsNotificationListener : NotificationListenerService() {
         
         if (text.isEmpty()) return
 
-        A8sAndroid.log("Intercepted RCS from $title")
+        val brief = text.replace("\n", " ").trim().let {
+            if (it.length > 200) it.take(200) + "…" else it
+        }
+        A8sAndroid.log("Intercepted RCS from $title: $brief")
         A8sService.instance?.publishIncoming(title, text)
     }
 }

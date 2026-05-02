@@ -5,8 +5,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
@@ -34,10 +36,14 @@ class A8sService : LifecycleService() {
     companion object {
         private const val CHANNEL_ID = "a8s_android_channel"
         private const val NOTIF_ID = 1001
+        const val SMS_SENT_ACTION = "com.a8s.android.SMS_SENT"
 
         var instance: A8sService? = null
             private set
     }
+
+    private val smsRequestSeq = java.util.concurrent.atomic.AtomicInteger(0)
+    private var sentResultReceiver: BroadcastReceiver? = null
 
     private var mqttClient: MqttAsyncClient? = null
     private val isConnected = AtomicBoolean(false)
@@ -45,6 +51,7 @@ class A8sService : LifecycleService() {
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var wifiLock: WifiManager.WifiLock
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val publishDedup = PublishDedup()
 
     override fun onCreate() {
         super.onCreate()
@@ -67,12 +74,46 @@ class A8sService : LifecycleService() {
         wifiLock.acquire()
 
         registerNetworkCallback()
+        registerSentResultReceiver()
         connect()
+    }
+
+    private fun registerSentResultReceiver() {
+        if (sentResultReceiver != null) return
+        val r = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                val rc = resultCode
+                val recipient = intent?.getStringExtra("recipient") ?: "?"
+                val part = intent?.getIntExtra("part", -1) ?: -1
+                val of = intent?.getIntExtra("of", -1) ?: -1
+                val verdict = when (rc) {
+                    android.app.Activity.RESULT_OK -> "OK"
+                    android.telephony.SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "GENERIC_FAILURE"
+                    android.telephony.SmsManager.RESULT_ERROR_NO_SERVICE -> "NO_SERVICE"
+                    android.telephony.SmsManager.RESULT_ERROR_NULL_PDU -> "NULL_PDU"
+                    android.telephony.SmsManager.RESULT_ERROR_RADIO_OFF -> "RADIO_OFF"
+                    else -> "rc=$rc"
+                }
+                A8sAndroid.log("SMS send result $verdict to $recipient (part ${part + 1}/$of)")
+            }
+        }
+        val filter = IntentFilter(SMS_SENT_ACTION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(r, filter)
+        }
+        sentResultReceiver = r
     }
 
     override fun onDestroy() {
         A8sAndroid.log("Service stopping")
         instance = null
+        sentResultReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) { }
+        }
+        sentResultReceiver = null
         mqttClient?.disconnect()
         super.onDestroy()
     }
@@ -138,11 +179,11 @@ class A8sService : LifecycleService() {
         val config = A8sAndroid.config ?: return
         when (val route = decideRoute(payload, config)) {
             is MqttRoute.Forward -> {
-                A8sAndroid.log("MQTT -> SMS forward to ${route.number}")
+                A8sAndroid.log("MQTT -> SMS forward to ${route.number}: ${preview(route.smsBody)}")
                 sendSms(route.number, route.smsBody)
             }
             is MqttRoute.Phonebook -> {
-                A8sAndroid.log("MQTT -> SMS to ${route.name} (${route.number})")
+                A8sAndroid.log("MQTT -> SMS to ${route.name} (${route.number}): ${preview(route.smsBody)}")
                 sendSms(route.number, route.smsBody)
             }
             is MqttRoute.Drop -> {
@@ -152,6 +193,11 @@ class A8sService : LifecycleService() {
                 A8sAndroid.log("MQTT Handle Error: ${route.reason}")
             }
         }
+    }
+
+    private fun preview(s: String, max: Int = 200): String {
+        val flat = s.replace("\n", " ").trim()
+        return if (flat.length <= max) flat else "${flat.take(max)}…"
     }
 
     private fun sendSms(to: String, body: String) {
@@ -167,7 +213,28 @@ class A8sService : LifecycleService() {
                 @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
-            smsManager.sendTextMessage(to, null, body, null, null)
+            // sentIntent fires once per part (the system splits long
+            // messages); we use a single-part PendingIntent and
+            // sendMultipartTextMessage so the result reaches us for
+            // every chunk.
+            val parts = smsManager.divideMessage(body)
+            val sentIntents = ArrayList<PendingIntent>(parts.size)
+            for (i in parts.indices) {
+                val intent = Intent(SMS_SENT_ACTION).apply {
+                    setPackage(packageName)
+                    putExtra("recipient", to)
+                    putExtra("part", i)
+                    putExtra("of", parts.size)
+                }
+                sentIntents.add(
+                    PendingIntent.getBroadcast(
+                        this, smsRequestSeq.incrementAndGet(), intent,
+                        PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                )
+            }
+            smsManager.sendMultipartTextMessage(to, null, parts, sentIntents, null)
+            A8sAndroid.log("SMS sent (queued) to $to: ${preview(body)}")
         } catch (e: Exception) {
             A8sAndroid.log("SMS Send Failed: " + e.message)
         }
@@ -212,6 +279,14 @@ class A8sService : LifecycleService() {
         // it. One envelope per matched name (rare, but a phonebook can
         // have aliases).
         matchedNames.forEach { name ->
+            // Dedup: Google Messages re-posts notifications on thread
+            // updates and the same SMS can fire both SmsReceiver and the
+            // notification listener. Same recipient + same body within
+            // the dedup window is treated as one message.
+            if (!publishDedup.shouldPublish("$name|$body")) {
+                A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
+                return@forEach
+            }
             val payload = JSONObject().apply {
                 put("id", Ulid.new())
                 put("date", isoNowUtc())
@@ -223,7 +298,7 @@ class A8sService : LifecycleService() {
 
             try {
                 mqttClient?.publish(config.remote.topic, MqttMessage(payload.toByteArray()))
-                A8sAndroid.log("SMS -> MQTT ${config.device} -> $name")
+                A8sAndroid.log("SMS -> MQTT ${config.device} -> $name: ${preview(body)}")
             } catch (e: Exception) {
                 A8sAndroid.log("MQTT Publish Failed: " + e.message)
             }
