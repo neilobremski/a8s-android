@@ -11,9 +11,11 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
@@ -25,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var configDetail: TextView
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
+    private lateinit var deleteSourceCheckbox: CheckBox
 
     private val pickJsonLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -32,14 +35,44 @@ class MainActivity : AppCompatActivity() {
             if (A8sAndroid.loadConfig(this, uri)) {
                 val app = application as A8sAndroid
                 app.startA8sService()
-                // The service may already be running with the previous
-                // config's remotes — tear those down and rebuild against
-                // the new config's `remotes` map. Otherwise inbound flows
-                // through the OLD client (still subscribed) but publishes
-                // look up the NEW remote name and find nothing.
                 A8sService.instance?.reconnectAll()
+                if (deleteSourceCheckbox.isChecked) {
+                    secureDeleteSource(uri)
+                }
                 updateUI()
             }
+        }
+    }
+
+    private fun secureDeleteSource(uri: Uri) {
+        try {
+            var size = 0L
+            contentResolver.openInputStream(uri)?.use { input ->
+                val buf = ByteArray(8 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    size += n
+                }
+            }
+            if (size > 0) {
+                contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                    val zeros = ByteArray(8 * 1024)
+                    var written = 0L
+                    while (written < size) {
+                        val n = minOf(zeros.size.toLong(), size - written).toInt()
+                        output.write(zeros, 0, n)
+                        written += n
+                    }
+                    output.flush()
+                }
+            }
+            val deleted = contentResolver.delete(uri, null, null)
+            A8sAndroid.log("Source config secure-delete: zeroed $size bytes, delete rows=$deleted")
+            Toast.makeText(this, "Source config deleted", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            A8sAndroid.log("Source config secure-delete failed: ${e.message}")
+            Toast.makeText(this, "Secure delete failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -74,87 +107,11 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 32, 32, 32)
         }
-
-        statusText = TextView(this).apply {
-            textSize = 18f
-            setPadding(0, 0, 0, 32)
-        }
-        root.addView(statusText)
-
-        val loadBtn = Button(this).apply {
-            text = "Load Configuration JSON"
-            setOnClickListener {
-                pickJsonLauncher.launch(arrayOf("application/json"))
-            }
-        }
-        root.addView(loadBtn)
-
-        // Primary one-tap CTA — bundles every dangerous runtime perm,
-        // the screen-capture projection consent, and (if needed) the
-        // Notification Listener settings page. Battery exemption is
-        // already prompted at app start so it's not in this flow.
-        val grantAllBtn = Button(this).apply {
-            text = "Grant All Permissions"
-            setOnClickListener { grantAllPermissions() }
-        }
-        root.addView(grantAllBtn)
-
-        val notifAccessBtn = Button(this).apply {
-            text = "Open Notification Access (for RCS)"
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-            }
-        }
-        root.addView(notifAccessBtn)
-
-        val captureBtn = Button(this).apply {
-            text = "Enable Screen Capture (for /screenshot)"
-            setOnClickListener { launchProjectionConsent() }
-        }
-        root.addView(captureBtn)
-
-        val a11yBtn = Button(this).apply {
-            text = "Enable Accessibility Service (for /tap, /macro)"
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-        }
-        root.addView(a11yBtn)
-
-        configDetail = TextView(this).apply {
-            textSize = 14f
-            setPadding(0, 32, 0, 32)
-        }
-        root.addView(configDetail)
-        
-        // Log Section
-        val logLabel = TextView(this).apply {
-            text = "Console Logs:"
-            textSize = 14f
-            setPadding(0, 32, 0, 8)
-        }
-        root.addView(logLabel)
-
-        logScroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-            // Hardcoded dark-on-light to stay readable regardless of system
-            // DayNight theme — the inherited theme color was white on light
-            // gray and unreadable in dark mode.
-            setBackgroundColor(0xFFF5F5F5.toInt())
-        }
-        logText = TextView(this).apply {
-            textSize = 12f
-            setPadding(16, 16, 16, 16)
-            typeface = android.graphics.Typeface.MONOSPACE
-            setTextColor(0xFF111111.toInt())
-        }
-        logScroll.addView(logText)
-        root.addView(logScroll)
-
+        addStatusBlock(root)
+        addConfigBlock(root)
+        addPermissionButtons(root)
+        addConfigDetail(root)
+        addLogBlock(root)
         setContentView(root)
 
         A8sAndroid.onLogListener = {
@@ -166,6 +123,89 @@ class MainActivity : AppCompatActivity() {
 
         requestMissingPermissions()
         updateUI()
+    }
+
+    private fun addStatusBlock(root: LinearLayout) {
+        statusText = TextView(this).apply {
+            textSize = 18f
+            setPadding(0, 0, 0, 32)
+        }
+        root.addView(statusText)
+    }
+
+    private fun addConfigBlock(root: LinearLayout) {
+        val loadBtn = Button(this).apply {
+            text = "Load Configuration JSON"
+            setOnClickListener {
+                pickJsonLauncher.launch(arrayOf("application/json"))
+            }
+        }
+        root.addView(loadBtn)
+        deleteSourceCheckbox = CheckBox(this).apply {
+            text = "Permanently delete source file after loading"
+            isChecked = false
+        }
+        root.addView(deleteSourceCheckbox)
+    }
+
+    private fun addPermissionButtons(root: LinearLayout) {
+        val grantAllBtn = Button(this).apply {
+            text = "Grant All Permissions"
+            setOnClickListener { grantAllPermissions() }
+        }
+        root.addView(grantAllBtn)
+        val notifAccessBtn = Button(this).apply {
+            text = "Open Notification Access (for RCS)"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+        }
+        root.addView(notifAccessBtn)
+        val captureBtn = Button(this).apply {
+            text = "Enable Screen Capture (for /screenshot)"
+            setOnClickListener { launchProjectionConsent() }
+        }
+        root.addView(captureBtn)
+        val a11yBtn = Button(this).apply {
+            text = "Enable Accessibility Service (for /tap, /macro)"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+        root.addView(a11yBtn)
+    }
+
+    private fun addConfigDetail(root: LinearLayout) {
+        configDetail = TextView(this).apply {
+            textSize = 14f
+            setPadding(0, 32, 0, 32)
+        }
+        root.addView(configDetail)
+    }
+
+    private fun addLogBlock(root: LinearLayout) {
+        val logLabel = TextView(this).apply {
+            text = "Console Logs:"
+            textSize = 14f
+            setPadding(0, 32, 0, 8)
+        }
+        root.addView(logLabel)
+        logScroll = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            )
+            setBackgroundColor(0xFFF5F5F5.toInt())
+        }
+        logText = TextView(this).apply {
+            textSize = 12f
+            setPadding(16, 16, 16, 16)
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(0xFF111111.toInt())
+        }
+        logScroll.addView(logText)
+        root.addView(logScroll)
     }
 
     private fun requiredDangerousPermissions(): List<String> {
@@ -299,8 +339,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             statusText.text = "a8s Android ${installedVersion()}\nStatus: Configured as " + config.device
             val sb = StringBuilder()
-            sb.append("Owner: ").append(config.owner ?: "(none)").append("\n")
-            sb.append("Forward: ").append(config.forward ?: "(none)").append("\n")
             // Remotes — show first by name → broker, "+N more" if more.
             if (config.remotes.isEmpty()) {
                 sb.append("Remote: (none configured)\n")

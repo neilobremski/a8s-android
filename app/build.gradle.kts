@@ -11,8 +11,8 @@ android {
         applicationId = "com.a8s.android"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.14.0"
+        versionCode = 21
+        versionName = "1.16.0"
     }
 
     signingConfigs {
@@ -75,6 +75,10 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    // EncryptedSharedPreferences (Keystore-backed AES-256-GCM). The 1.0.0
+    // stable line throws on Android 12+ in some configurations; 1.1.0-alpha06
+    // is the de-facto-stable build.
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     // org.json is shipped with the Android runtime, so production code uses it

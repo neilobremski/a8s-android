@@ -16,10 +16,14 @@ cluster to a phone. Acts as a participant on the MQTT topic and:
 - **SMS/RCS → MQTT** — incoming SMS or intercepted Google Messages RCS
   notifications publish back to the cluster as if they came from the
   matched phonebook participant.
-- **Self-receive (forward)** — `tell <device-name>` SMSs the operator at
-  a configured `forward` number, prefixed with the sender name.
-- **Owner /commands** — a single trusted `owner` participant can issue
-  `/info`, `/logs [N]`, etc. and get a `tell`'d response back.
+- **Self-receive (forward)** — `tell <device-name>` from a phonebook
+  sender SMSs that sender's own number (`phonebook[from]`). Non-phonebook
+  senders drop.
+- **Phonebook /commands** — any phonebook participant can issue
+  `/info` (add `verbose` for the full device-fact dump per
+  `INFO_FIELD_RESEARCH.md`), `/logs [N]`, etc. and get a `tell`'d
+  response back. Phonebook membership *is* the privilege; there is no
+  separate `owner`.
 
 ## Module map (under `app/src/main/java/com/a8s/android/`)
 
@@ -31,7 +35,7 @@ cluster to a phone. Acts as a participant on the MQTT topic and:
 | `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent` (modern API; older PDU-extraction path was removed). Forwards to `A8sService.publishIncoming`. |
 | `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Forwards to `A8sService.publishIncoming`. |
 | `BootReceiver.kt` | Re-launches `A8sService` on `BOOT_COMPLETED`. |
-| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Variants: `Forward` / `Phonebook` / `Command(owner, name, args)` / `Drop(reason)` / `ParseError(reason)`. **All routing logic lives here so it's unit-testable.** Service layer just dispatches. |
+| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Variants: `Forward` / `Phonebook` / `Command(sender, name, args)` / `Drop(reason)` / `ParseError(reason)`. **All routing logic lives here so it's unit-testable.** Service layer just dispatches. |
 | `Commands.kt` | Pure formatters for slash-command output. `InfoSnapshot` data class is filled in by `A8sService.snapshotInfo()` and passed to `renderInfo`. `renderLogs(logs, n)` does tail+header. Keeps Android-specific `Build`/`BatteryManager`/`ConnectivityManager` calls out of the formatter so it tests without a Context. |
 | `PublishDedup.kt` | Bounded LRU keyed on `<recipient>\|<body>`, default 5-minute window / 100 entries. Stops the duplicate-publish bug from Google Messages re-posting notifications. |
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
@@ -50,7 +54,8 @@ cluster to a phone. Acts as a participant on the MQTT topic and:
 | `MacroParser.kt` | Pure-Kotlin parser for `/macro <step1> \| <step2> \| …`. Sealed-class `MacroStep` with one variant per verb (`Tap`/`LongTap`/`Swipe`/`Key`/`Input`/`Find`/`Delay`/`ParseError`). Bad numeric arg or unknown verb produces a `ParseError` step rather than throwing; the runner aborts on the first error. Unit-tested in `MacroParserTest`. |
 | `CmdMacro.kt` | `/macro <step1> \| <step2> \| …` — runs the parsed steps with full evidence: a `before` PNG (via `service.captureScreenshotPng`), a screen recording driven by `MediaProjection` + `MediaRecorder` writing H264 MP4 (720p, 4 Mbps, no audio), an `after` PNG, and a per-step `step N ok` / `step N (verb) failed: <reason>` summary. Aborts the rest of the macro on the first failed step. Reuses the same MediaProjection consent token A8sService caches for `/screenshot`. |
 | `CmdTap.kt` / `CmdLongtap.kt` / `CmdSwipe.kt` / `CmdKey.kt` / `CmdInput.kt` / `CmdFind.kt` | Single-action UI-automation verbs. Each calls the matching `A11yService.instance` method, sleeps `POST_GESTURE_SETTLE_MS` for redraw, then sends a status message + post-action PNG via `UiActionReply.send`. If the accessibility service isn't enabled they reply with the `A11Y_DISABLED_MSG` constant; if MediaProjection consent isn't granted they still send the text reply but skip the screenshot. |
-| `UiActionReply.kt` | Shared `Cmd*` helper: takes the gesture's text reply and a `kind` label, captures a post-action screenshot via `service.captureScreenshotPng`, and forwards through `service.replyToOwner(... files = listOf(png))`. Constants `A11Y_DISABLED_MSG` and `POST_GESTURE_SETTLE_MS` live here. |
+| `UiActionReply.kt` | Shared `Cmd*` helper: takes the gesture's text reply and a `kind` label, captures a post-action screenshot via `service.captureScreenshotPng`, and forwards through `service.replyToSender(... files = listOf(png))`. Constants `A11Y_DISABLED_MSG` and `POST_GESTURE_SETTLE_MS` live here. |
+| `SecureConfigStore.kt` | Wraps `androidx.security.crypto.EncryptedSharedPreferences` (Keystore-backed AES-256-GCM). On every successful `loadConfig`, the parsed `remotes` JSON blob is mirrored into `secure_config.xml` so MQTT credentials at rest are ciphertext. Threat model: an attacker abusing `/cat` of our own data dir gets opaque bytes, not the broker password. |
 | `RemoteConfig.kt` | One MQTT remote (transport, broker, topic, username, password). |
 | `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — turns the JSON config into typed `Map<String, RemoteConfig>` + `List<StorageService>`. Accepts both new (`remotes` map) and legacy (singular `remote` block) shapes; rejects unknown spec keys to fail loud on typos. |
 | `StorageService.kt` | Interface for cross-cluster file backends — `store(file): URL`, `retrieve(url, dest): Bool`. Stateless. |
@@ -95,13 +100,15 @@ contract:
    matches a phonebook entry) infinite-loop.
 2. **Missing `to`.** → `Drop`.
 3. **`to == config.device`** (this device is the recipient):
-   - **Owner command.** If `owner` is set AND `from == owner` AND
-     `content.startsWith("/")` → `Command(owner, verb, args)`. Verb is
-     lowercased; empty verb (`"/   "`) drops. Bypasses phonebook gate
-     because owner *is* the gate.
-   - **Forward.** Else, `forward` must be set, and `from` must be a
-     phonebook key (sender verification — only known cluster
-     participants can SMS the operator). SMS body is `"<from>: <content>"`.
+   - **Phonebook gate.** `from` must be a phonebook key. Otherwise the
+     envelope drops — non-phonebook senders cannot reach the operator
+     or run commands.
+   - **Slash command.** If `content.startsWith("/")` →
+     `Command(sender, verb, args)`. Verb is lowercased; empty verb
+     (`"/   "`) drops.
+   - **Forward.** Else, the SMS body is the bare content, sent to
+     `phonebook[from]` (the sender's own number — typically the
+     operator's phone for the phonebook entries that map to it).
 4. **`to` in phonebook** → `Phonebook(name, number, content)`, SMSed to
    that number with the bare content (no `from:` prefix; the phonebook
    target is a stranger, the sender's identity isn't theirs to see).
@@ -112,8 +119,6 @@ contract:
 ```json
 {
   "device":   "<this phone's participant name>",
-  "forward":  "<optional: number for messages addressed to device>",
-  "owner":    "<optional: the only name allowed to run /commands>",
   "phonebook": { "Clover": "+15550001111", "Gerry": "+15550002222" },
   "remotes": {
     "hivemq": {
@@ -129,6 +134,11 @@ contract:
   }
 }
 ```
+
+The pre-1.16.0 `forward` and `owner` keys are dropped on parse with a
+startup warning. Phonebook membership is the single auth gate, and
+`phonebook[from]` is the per-sender forward target. The MQTT
+credentials are persisted encrypted-at-rest via `SecureConfigStore`.
 
 **Multiple remotes** — `remotes` is a map; each entry gets its own
 paho client, subscriber thread, and reconnect loop. Outbound publishes
@@ -150,14 +160,14 @@ in-place `/update` not require the user to rewrite the config first.
 
 - The user picks the file via Storage Access Framework; the URI is
   persisted (`takePersistableUriPermission`) so reloads work post-reboot.
-- `phonebook` is the union of (a) outbound: `name → number` for SMSing
-  cluster sends; (b) inbound: reverse-lookup for naming the publisher
-  on SMS→MQTT.
-- `forward` is typically the operator's own number. Without it,
-  self-addressed messages drop.
-- `owner` defaults to none — without it, slash-prefixed content from
-  anyone falls through to the regular forward path (which still gates
-  on phonebook membership).
+  The **Permanently delete source file after loading** checkbox in
+  `MainActivity` does a best-effort secure delete (zero-overwrite then
+  SAF delete) of the picked file after the parse succeeds; per-launch
+  state, default unchecked.
+- `phonebook` plays three roles: (a) outbound `name → number` for
+  cluster→SMS; (b) inbound reverse-lookup naming the publisher on
+  SMS→MQTT; (c) auth gate for self-receive — only phonebook senders can
+  reach `device`, and the SMS forward target is their own number.
 
 ## Permissions
 
@@ -287,9 +297,9 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
   notifications on thread updates; without dedup the cluster sees N
   copies of the same SMS reply.
 - **Don't trust the `from` for forwarding without checking the
-  phonebook.** That's what the sender-verification gate is for. Owner
-  is the *only* identity allowed to skip it (and only for
-  slash-commands).
+  phonebook.** Phonebook membership is the single auth gate for
+  self-addressed envelopes, both for slash commands and for SMS
+  forwarding.
 - **Don't add a fresh debug keystore.** Let the committed
   `app/debug.keystore` sign every build, or in-place upgrades break.
 

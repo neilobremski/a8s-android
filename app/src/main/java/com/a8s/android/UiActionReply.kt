@@ -25,13 +25,13 @@ internal object UiActionReply {
     fun send(
         service: A8sService,
         config: A8sAndroid.Config,
-        owner: String,
+        sender: String,
         body: String,
         kind: String,
     ) {
         if (!service.hasProjectionConsent()) {
-            service.replyToOwner(
-                config, owner,
+            service.replyToSender(
+                config, sender,
                 "$body (no screen-capture consent — re-grant via Grant All Permissions to attach a verification screenshot)",
             )
             return
@@ -39,9 +39,9 @@ internal object UiActionReply {
         val dest = File(File(service.cacheDir, "ui-actions"), "$kind-${System.currentTimeMillis()}.png")
         val captured = service.captureScreenshotPng(dest)
         if (captured) {
-            service.replyToOwner(config, owner, body, files = listOf(dest))
+            service.replyToSender(config, sender, body, files = listOf(dest))
         } else {
-            service.replyToOwner(config, owner, "$body (post-action screenshot capture failed)")
+            service.replyToSender(config, sender, "$body (post-action screenshot capture failed)")
         }
     }
 }

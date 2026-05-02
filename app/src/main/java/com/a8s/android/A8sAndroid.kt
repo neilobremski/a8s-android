@@ -15,8 +15,7 @@ class A8sAndroid : Application() {
 
     companion object {
         private const val TAG = "A8sAndroid"
-        private const val CONFIG_PREF = "config_uri"
-        
+
         var config: Config? = null
             private set
 
@@ -37,47 +36,25 @@ class A8sAndroid : Application() {
         fun getLogs(): String = synchronized(logs) { logs.joinToString("\n") }
 
         fun loadConfig(context: Context, uri: Uri? = null): Boolean {
+            if (uri != null) {
+                return loadConfigFromSaf(context, uri)
+            }
+            val cached = SecureConfigStore(context).loadConfigJson()
+            if (cached != null) {
+                return loadConfigFromCache(context, cached)
+            }
+            return false
+        }
+
+        private fun loadConfigFromSaf(context: Context, targetUri: Uri): Boolean {
             val resolver = context.contentResolver
-            val targetUri = uri ?: getSavedUri(context) ?: return false
-            
             try {
                 resolver.openInputStream(targetUri)?.use { stream ->
-                    val text = stream.bufferedReader().use { it.readText() }
-                    val json = JSONObject(text)
-                    
-                    val device = json.getString("device")
-                    val forward: String? = json.optString("forward", "").ifBlank { null }
-                    val owner: String? = json.optString("owner", "").ifBlank { null }
-                    val phonebookMap = mutableMapOf<String, String>()
-                    val phonebookJson = json.getJSONObject("phonebook")
-                    val keys = phonebookJson.keys()
-                    while (keys.hasNext()) {
-                        val name = keys.next()
-                        phonebookMap[name] = phonebookJson.getString(name)
-                    }
-
-                    val remotes = Network.parseRemotes(json)
-                    if (remotes.isEmpty()) {
-                        log("Config error: no remotes (need 'remotes' map or legacy 'remote' object)")
-                        return false
-                    }
-                    val services = try {
-                        Network.parseServices(json)
-                    } catch (e: Exception) {
-                        log("Storage services skipped: ${e.message}")
-                        emptyList()
-                    }
-
-                    config = Config(device, forward, owner, phonebookMap, remotes, services)
-                    saveUri(context, targetUri)
-                    log(
-                        "Config loaded: device=$device, " +
-                            "forward=${forward ?: "(none)"}, " +
-                            "owner=${owner ?: "(none)"}, " +
-                            "phonebook=${phonebookMap.size}, " +
-                            "remotes=${remotes.size}, " +
-                            "services=${services.size}"
-                    )
+                    val rawText = stream.bufferedReader().use { it.readText() }
+                    val parsed = parseConfigJson(rawText) ?: return false
+                    SecureConfigStore(context).saveConfigJson(rawText)
+                    config = parsed
+                    logConfigLoaded(parsed, "SAF")
                     return true
                 }
             } catch (e: Exception) {
@@ -86,22 +63,60 @@ class A8sAndroid : Application() {
             return false
         }
 
-        private fun saveUri(context: Context, uri: Uri) {
-            context.getSharedPreferences("a8s", MODE_PRIVATE)
-                .edit().putString(CONFIG_PREF, uri.toString()).apply()
+        private fun loadConfigFromCache(context: Context, cachedJson: String): Boolean {
+            try {
+                val parsed = parseConfigJson(cachedJson) ?: run {
+                    SecureConfigStore(context).clear()
+                    return false
+                }
+                config = parsed
+                logConfigLoaded(parsed, "encrypted store")
+                return true
+            } catch (e: Exception) {
+                log("Config error (encrypted store): " + (e.message ?: "unknown"))
+                SecureConfigStore(context).clear()
+            }
+            return false
         }
 
-        private fun getSavedUri(context: Context): Uri? {
-            val s = context.getSharedPreferences("a8s", MODE_PRIVATE)
-                .getString(CONFIG_PREF, null) ?: return null
-            return Uri.parse(s)
+        private fun parseConfigJson(rawText: String): Config? {
+            val json = JSONObject(rawText)
+            val device = json.getString("device")
+            if (json.has("owner")) log("Config warning: 'owner' is no longer used (ignored)")
+            if (json.has("forward")) log("Config warning: 'forward' is no longer used (ignored)")
+            val phonebookMap = mutableMapOf<String, String>()
+            val phonebookJson = json.getJSONObject("phonebook")
+            val keys = phonebookJson.keys()
+            while (keys.hasNext()) {
+                val name = keys.next()
+                phonebookMap[name] = phonebookJson.getString(name)
+            }
+            val remotes = Network.parseRemotes(json)
+            if (remotes.isEmpty()) {
+                log("Config error: no remotes (need 'remotes' map or legacy 'remote' object)")
+                return null
+            }
+            val services = try {
+                Network.parseServices(json)
+            } catch (e: Exception) {
+                log("Storage services skipped: ${e.message}")
+                emptyList()
+            }
+            return Config(device, phonebookMap, remotes, services)
+        }
+
+        private fun logConfigLoaded(parsed: Config, source: String) {
+            log(
+                "Config loaded ($source): device=${parsed.device}, " +
+                    "phonebook=${parsed.phonebook.size}, " +
+                    "remotes=${parsed.remotes.size}, " +
+                    "services=${parsed.services.size}"
+            )
         }
     }
 
     data class Config(
         val device: String,
-        val forward: String?,
-        val owner: String?,
         val phonebook: Map<String, String>,
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,

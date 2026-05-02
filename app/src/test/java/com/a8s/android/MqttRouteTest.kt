@@ -8,13 +8,9 @@ class MqttRouteTest {
 
     private fun config(
         device: String = "my-phone",
-        forward: String? = "+15550001111",
-        owner: String? = null,
         phonebook: Map<String, String> = mapOf("Clover" to "+15550001111"),
     ): A8sAndroid.Config = A8sAndroid.Config(
         device = device,
-        forward = forward,
-        owner = owner,
         phonebook = phonebook,
         remotes = mapOf(
             "default" to RemoteConfig(
@@ -28,32 +24,14 @@ class MqttRouteTest {
     )
 
     @Test
-    fun `to == device with forward set and known sender produces Forward route`() {
+    fun `to == device with known sender forwards to that sender's number`() {
         val payload = """{"to":"my-phone","from":"Clover","content":"hello"}"""
         val r = decideRoute(payload, config())
         assertEquals(MqttRoute.Forward("+15550001111", "hello"), r)
     }
 
     @Test
-    fun `to == device without forward drops`() {
-        val payload = """{"to":"my-phone","from":"Clover","content":"hello"}"""
-        val r = decideRoute(payload, config(forward = null))
-        assertTrue(r is MqttRoute.Drop)
-        assertTrue((r as MqttRoute.Drop).reason.contains("no forward"))
-    }
-
-    @Test
-    fun `to == device with blank forward drops`() {
-        val payload = """{"to":"my-phone","from":"Clover","content":"hello"}"""
-        val r = decideRoute(payload, config(forward = "   "))
-        assertTrue(r is MqttRoute.Drop)
-    }
-
-    @Test
-    fun `to == device from unknown sender is dropped (sender verification)`() {
-        // Forward path requires `from` to be a known phonebook participant.
-        // An untrusted/unknown sender on the cluster cannot reach the
-        // operator's phone via this device.
+    fun `to == device from unknown sender drops`() {
         val payload = """{"to":"my-phone","from":"stranger","content":"hello"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
@@ -61,18 +39,15 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `to == device with empty from is dropped`() {
-        // Empty `from` can't be a phonebook participant, so the forward
-        // gate rejects it. This also catches malformed envelopes.
+    fun `to == device with empty from drops`() {
         val payload = """{"to":"my-phone","content":"hello"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
+        assertTrue((r as MqttRoute.Drop).reason.contains("not in phonebook"))
     }
 
     @Test
     fun `self-loopback (from equals device) is dropped`() {
-        // The MQTT broker echoes our own publishes back. We must not
-        // re-route those as fresh SMS.
         val payload = """{"to":"Clover","from":"my-phone","content":"hi"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
@@ -110,29 +85,25 @@ class MqttRouteTest {
 
     @Test
     fun `device wins over phonebook entry of the same name`() {
-        // If somebody puts the device name in the phonebook too, the
-        // self-receive (Forward) path takes precedence — provided the
-        // sender is also in the phonebook.
         val cfg = config(phonebook = mapOf("my-phone" to "+1999", "Clover" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Clover","content":"hi"}"""
         val r = decideRoute(payload, cfg)
         assertTrue(r is MqttRoute.Forward)
+        assertEquals(MqttRoute.Forward("+15550001111", "hi"), r)
     }
 
     @Test
     fun `content field is read instead of body`() {
-        // Regression guard for the original `body` vs `content` bug — the
-        // host (Python a8s) writes envelopes with `content`, never `body`.
         val payload = """{"to":"Clover","from":"gerry","content":"present","body":"WRONG"}"""
         val r = decideRoute(payload, config())
         assertEquals(MqttRoute.Phonebook("Clover", "+15550001111", "present"), r)
     }
 
-    // ---------- /command routing (owner) ----------
+    // ---------- /command routing (phonebook is the auth gate) ----------
 
     @Test
-    fun `slash command from owner produces Command route`() {
-        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+    fun `slash command from phonebook sender produces Command route`() {
+        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Neil","content":"/info"}"""
         val r = decideRoute(payload, cfg)
         assertEquals(MqttRoute.Command("Neil", "info", emptyList()), r)
@@ -140,18 +111,15 @@ class MqttRouteTest {
 
     @Test
     fun `slash command parses args`() {
-        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Neil","content":"/logs 100"}"""
         val r = decideRoute(payload, cfg)
         assertEquals(MqttRoute.Command("Neil", "logs", listOf("100")), r)
     }
 
     @Test
-    fun `slash command from non-owner does not bypass phonebook gate`() {
-        // Non-owner sending a slash isn't a command — falls through to
-        // Forward path with sender verification. Stranger isn't in the
-        // phonebook, so it drops.
-        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+    fun `slash command from unknown sender drops`() {
+        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"stranger","content":"/info"}"""
         val r = decideRoute(payload, cfg)
         assertTrue(r is MqttRoute.Drop)
@@ -159,31 +127,16 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `non-slash content from owner takes the forward path`() {
-        // Owner can still send regular forward messages — only content
-        // beginning with / is treated as a command.
-        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+    fun `non-slash content from phonebook sender takes the forward path`() {
+        val cfg = config(phonebook = mapOf("Neil" to "+15550009999"))
         val payload = """{"to":"my-phone","from":"Neil","content":"hello"}"""
         val r = decideRoute(payload, cfg)
-        assertTrue(r is MqttRoute.Forward)
-        assertEquals(MqttRoute.Forward("+15550001111", "hello"), r)
-    }
-
-    @Test
-    fun `slash command requires owner configured`() {
-        // Without owner, /info from anyone hits the forward path's
-        // sender-verification (must be in phonebook) — Neil happens to
-        // be in the phonebook, so this is treated as a forwarded SMS
-        // body that starts with a slash, not as a command.
-        val cfg = config(owner = null, phonebook = mapOf("Neil" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Neil","content":"/info"}"""
-        val r = decideRoute(payload, cfg)
-        assertTrue(r is MqttRoute.Forward)
+        assertEquals(MqttRoute.Forward("+15550009999", "hello"), r)
     }
 
     @Test
     fun `command verb is lowercased`() {
-        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Neil","content":"/INFO"}"""
         val r = decideRoute(payload, cfg)
         assertEquals(MqttRoute.Command("Neil", "info", emptyList()), r)
@@ -191,7 +144,7 @@ class MqttRouteTest {
 
     @Test
     fun `empty slash command drops`() {
-        val cfg = config(owner = "Neil", phonebook = mapOf("Neil" to "+15550001111"))
+        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Neil","content":"/   "}"""
         val r = decideRoute(payload, cfg)
         assertTrue(r is MqttRoute.Drop)

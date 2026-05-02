@@ -19,9 +19,8 @@ The app is configured via a JSON file with the following schema:
 ```json
 {
   "device": "android-pixel-7",
-  "forward": "+15550009999",
-  "owner": "Neil",
   "phonebook": {
+    "Neil": "+15550009999",
     "Clover": "+15550001111",
     "Gerry": "+15550002222"
   },
@@ -45,22 +44,25 @@ The app is configured via a JSON file with the following schema:
 
 The legacy `1.9.0` shape (a flat `remote` object instead of `remotes`)
 still parses — it's wrapped as `remotes: { "default": ... }` so an
-in-place upgrade doesn't break.
+in-place upgrade doesn't break. The pre-1.16.0 `forward` and `owner`
+keys are ignored (with a startup warning) — the phonebook is now the
+single auth gate.
 
 - **`device`** — the participant name this phone identifies as on the a8s
   cluster. When other agents `tell <device> "..."`, the message arrives at
   this phone.
-- **`forward`** *(optional)* — phone number where messages addressed to
-  `device` are SMS'd. Without it, self-addressed messages are dropped.
-  Typical setup: this is the phone owner's own number, so agents can reach
-  the operator out-of-band. Replies SMS'd back into the device are routed
-  via the phonebook (so the operator's number must also be in the phonebook
-  under whatever participant name the cluster should see).
-- **`owner`** *(optional)* — the participant name authorized to issue
-  on-device `/commands`. When `tell <device> "/info"` is sent by `<owner>`,
-  the device runs the command locally and `tell`s the response back. Owner
-  authorization is the gate (no phonebook lookup needed for the command
-  path) — only this single name can run privileged actions on the phone.
+- **`phonebook`** — `name → phone-number` map. Doubles as the auth gate:
+  - **Outbound** (cluster → SMS): agents `tell <name> "..."` → SMS to that
+    number.
+  - **Self-receive**: messages addressed to `device` from a phonebook
+    sender forward as SMS to **that sender's own number**
+    (`phonebook[from]`). Senders not in the phonebook are dropped.
+  - **Slash commands**: a phonebook sender whose `content` starts with
+    `/` runs the command on-device; the reply is `tell`'d back to that
+    sender. There is no separate "owner" — phonebook membership *is* the
+    privilege.
+  - **Inbound SMS**: SMS from a known number publishes back to MQTT as
+    that name.
 - **`remotes`** — map of MQTT brokers this device subscribes/publishes to.
   Each entry is keyed by an arbitrary local name and contains
   `transport` (default `"mqtt"`), `broker`, `topic`, optional
@@ -76,19 +78,16 @@ in-place upgrade doesn't break.
   URLs need to be downloaded for inbound or uploaded for outbound.
   Per-service options: `expiry_hours` (1, 6, 24, 48; default 24) and
   `timeout_s` (default 30).
-- **`phonebook`** — `name → phone-number` map for the SMS gateway role.
-  Outbound: agents `tell <name> "..."` → SMS to that number. Inbound: SMS
-  from a known number publishes back to MQTT as that name.
 
-### Slash commands (owner-only)
+### Slash commands (phonebook-only)
 
-When `owner` is set in the config, the named participant can send
-`tell <device> "/<command> [args]"` and the device executes it locally.
-Responses come back as `tell <owner> "..."` over MQTT.
+Any phonebook participant can send `tell <device> "/<command> [args]"`
+and the device executes it locally. Responses come back as
+`tell <sender> "..."` over MQTT. Senders not in the phonebook are dropped.
 
 | Command | Description |
 |---|---|
-| `/info` | App version, device model, Android release, MQTT state, network type, battery, uptime, config summary. |
+| `/info` | App version, device model, Android release, MQTT state, network, battery, memory, storage, display, power, permissions, services, uptime, config. Add `verbose` (or `-v` / `--verbose`) for the full ~150-field dump (identifiers, Wi-Fi SSID/BSSID, IPs, sensors, last-known location, camera details, etc.). See `INFO_FIELD_RESEARCH.md` for the full field catalogue. |
 | `/logs [N]` | Last `N` lines of the in-app log buffer (default 50, max 500). |
 | `/update` | Fetch the latest GitHub Release APK and trigger the system install dialog. |
 | `/update --check` | Compare the installed version to the latest release without downloading. |
@@ -134,10 +133,10 @@ One-time setup: in **Settings → Apps → a8s Android → Install unknown
 apps**, toggle **Allow from this source** on. Without it, the install
 dialog shows but the install is blocked.
 
-The slash-command path bypasses the phonebook gate the forward path
-uses — `from == owner` *is* the authorization. Non-owner senders that
-happen to send a slash-prefixed message fall through to the regular
-forward path, which still requires phonebook membership.
+Phonebook membership is the only auth gate. A phonebook sender whose
+content starts with `/` runs a slash command; otherwise the message
+forwards as SMS to that sender's own number (`phonebook[from]`).
+Non-phonebook senders are dropped before any of this.
 
 ## Persistence — does it keep running with the screen off?
 
@@ -182,7 +181,14 @@ without an obvious cause, those are the first two things to check.
    - **Battery Optimization** exemption is requested automatically.
 3. **Configure:** Use the **Load Configuration JSON** button to select
    your `a8s.json` file. The status panel shows what's granted, what's
-   missing, and the device's a8s identity once configured.
+   missing, and the device's a8s identity once configured. Tick
+   **Permanently delete source file after loading** to overwrite the
+   picked file with zeros and remove it via the SAF provider after a
+   successful load — best-effort secure delete (works on the local
+   Files-app provider; cloud providers like Google Drive may ignore
+   the zero-overwrite). MQTT credentials in the loaded config are
+   stored encrypted-at-rest via Keystore-backed
+   `EncryptedSharedPreferences`.
 
 ## Development
 

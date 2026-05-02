@@ -44,7 +44,7 @@ class A8sService : LifecycleService() {
             private set
 
         // Verb -> handler map. The handler receives the live service so
-        // it can call `replyToOwner` and reach the cached MediaProjection
+        // it can call `replyToSender` and reach the cached MediaProjection
         // consent. Keeping the dispatch as a map (rather than a `when` in
         // executeCommand) keeps the cyclomatic complexity below detekt's
         // ceiling as new verbs land.
@@ -266,7 +266,7 @@ class A8sService : LifecycleService() {
                 sendSms(route.number, route.smsBody)
             }
             is MqttRoute.Command -> {
-                A8sAndroid.log("/${route.name} from owner=${route.owner}")
+                A8sAndroid.log("/${route.name} from sender=${route.sender}")
                 executeCommand(route)
             }
             is MqttRoute.Drop -> {
@@ -294,25 +294,30 @@ class A8sService : LifecycleService() {
             return
         }
         val reply = when (cmd.name) {
-            "info" -> Commands.renderInfo(snapshotInfo(config))
+            "info" -> {
+                val verbose = cmd.args.any {
+                    it.equals("verbose", ignoreCase = true) || it == "-v" || it == "--verbose"
+                }
+                Commands.renderInfo(InfoSnapshotter.capture(this, config, verbose), verbose)
+            }
             "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
             else -> Commands.renderUnknown(cmd.name)
         }
-        publishToOwner(config, cmd.owner, reply)
+        publishToSender(config, cmd.sender, reply)
     }
 
     /**
-     * Public wrapper around `publishToOwner` for the `Cmd*` handlers.
+     * Public wrapper around `publishToSender` for the `Cmd*` handlers.
      * They live in their own files but need to send replies through
      * the same wire-format / storage-upload path as everything else.
      */
-    fun replyToOwner(
+    fun replyToSender(
         config: A8sAndroid.Config,
-        owner: String,
+        sender: String,
         body: String,
         files: List<File> = emptyList(),
     ) {
-        publishToOwner(config, owner, body, files)
+        publishToSender(config, sender, body, files)
     }
 
     /** Called from MainActivity after the user grants screen-capture
@@ -368,8 +373,8 @@ class A8sService : LifecycleService() {
     private fun runScreenshotCommand(config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val data = projectionData
         if (data == null || projectionResultCode == 0) {
-            publishToOwner(
-                config, cmd.owner,
+            publishToSender(
+                config, cmd.sender,
                 "Screen capture not authorized — consent is held in-memory and " +
                     "is lost on app/process restart (e.g. after /update reinstall). " +
                     "Open the app and tap \"Grant All Permissions\" (or " +
@@ -378,8 +383,8 @@ class A8sService : LifecycleService() {
             return
         }
         if (config.services.isEmpty()) {
-            publishToOwner(
-                config, cmd.owner,
+            publishToSender(
+                config, cmd.sender,
                 "Cannot send screenshot: no storage service configured. " +
                     "Add a `services` entry to a8s.json (e.g. tempfile_org).",
             )
@@ -390,24 +395,24 @@ class A8sService : LifecycleService() {
         try {
             projection = mgr.getMediaProjection(projectionResultCode, data)
             if (projection == null) {
-                publishToOwner(config, cmd.owner, "Screen capture failed: projection unavailable")
+                publishToSender(config, cmd.sender, "Screen capture failed: projection unavailable")
                 return
             }
             val dest = File(File(cacheDir, "screenshots"), "screenshot-${System.currentTimeMillis()}.png")
             val captured = Screenshot(this, projection).capture(dest)
             if (!captured) {
-                publishToOwner(config, cmd.owner, "Screen capture failed: timed out waiting for frame")
+                publishToSender(config, cmd.sender, "Screen capture failed: timed out waiting for frame")
                 return
             }
             A8sAndroid.log("Screenshot captured: ${dest.length()} bytes")
-            publishToOwner(
-                config, cmd.owner,
+            publishToSender(
+                config, cmd.sender,
                 "Screenshot (${dest.length()} bytes)",
                 files = listOf(dest),
             )
         } catch (e: Exception) {
             A8sAndroid.log("Screenshot failed: ${e.message}")
-            publishToOwner(config, cmd.owner, "Screenshot failed: ${e.message}")
+            publishToSender(config, cmd.sender, "Screenshot failed: ${e.message}")
         } finally {
             try { projection?.stop() } catch (_: Exception) { }
         }
@@ -420,7 +425,7 @@ class A8sService : LifecycleService() {
             val installedVersion = installedVersionName()
             if (checkOnly) {
                 val latest = Updater.fetchLatestRelease()
-                publishToOwner(config, cmd.owner, Updater.renderCheck(installedVersion, latest))
+                publishToSender(config, cmd.sender, Updater.renderCheck(installedVersion, latest))
                 return
             }
             val (downloadUrl, fileName) = if (explicitUrl != null) {
@@ -428,15 +433,15 @@ class A8sService : LifecycleService() {
             } else {
                 val latest = Updater.fetchLatestRelease()
                 if (Updater.compareVersions(installedVersion, latest.versionName) >= 0) {
-                    publishToOwner(
-                        config, cmd.owner,
+                    publishToSender(
+                        config, cmd.sender,
                         "Already up to date (installed v$installedVersion, latest ${latest.tagName}). " +
                             "Use /update <url> to force a specific build.",
                     )
                     return
                 }
-                publishToOwner(
-                    config, cmd.owner,
+                publishToSender(
+                    config, cmd.sender,
                     "Update available: v$installedVersion → ${latest.tagName} " +
                         "(${Updater.humanSize(latest.sizeBytes)}). Downloading…",
                 )
@@ -446,14 +451,14 @@ class A8sService : LifecycleService() {
             Updater.downloadTo(downloadUrl, dest)
             A8sAndroid.log("Update downloaded to ${dest.absolutePath} (${dest.length()} bytes)")
             triggerInstallPrompt(dest)
-            publishToOwner(
-                config, cmd.owner,
+            publishToSender(
+                config, cmd.sender,
                 "Downloaded ${Updater.humanSize(dest.length())}. Install dialog launched on phone — " +
                     "tap Install on the device to apply.",
             )
         } catch (e: Exception) {
             A8sAndroid.log("Update failed: ${e.message}")
-            publishToOwner(config, cmd.owner, "Update failed: ${e.message}")
+            publishToSender(config, cmd.sender, "Update failed: ${e.message}")
         }
     }
 
@@ -473,16 +478,10 @@ class A8sService : LifecycleService() {
         startActivity(intent)
     }
 
-    private fun snapshotInfo(config: A8sAndroid.Config): Commands.InfoSnapshot {
-        val pInfo = try {
-            packageManager.getPackageInfo(packageName, 0)
-        } catch (_: Exception) { null }
-        val appVersion = if (pInfo != null) {
-            "v${pInfo.versionName} (build ${pInfo.longVersionCode})"
-        } else "v?"
-        val networkType = describeActiveNetwork()
-        val (battPct, charging) = readBattery()
-        val remoteStatuses = config.remotes.map { (name, rc) ->
+    /** Used by `InfoSnapshotter.capture` to read live MQTT connection
+     *  state without exposing the `mqttClients` map. */
+    fun remoteStatuses(config: A8sAndroid.Config): List<Commands.RemoteStatus> =
+        config.remotes.map { (name, rc) ->
             Commands.RemoteStatus(
                 name = name,
                 broker = rc.broker,
@@ -490,50 +489,14 @@ class A8sService : LifecycleService() {
                 connected = mqttClients[name]?.isConnected == true,
             )
         }
-        return Commands.InfoSnapshot(
-            appVersion = appVersion,
-            deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}",
-            androidRelease = Build.VERSION.RELEASE ?: "?",
-            sdkInt = Build.VERSION.SDK_INT,
-            remotes = remoteStatuses,
-            services = config.services.map { it.id },
-            networkType = networkType,
-            batteryPercent = battPct,
-            batteryCharging = charging,
-            uptimeMs = if (serviceStartMs == 0L) 0L else System.currentTimeMillis() - serviceStartMs,
-            phonebookSize = config.phonebook.size,
-            ownerSet = !config.owner.isNullOrBlank(),
-            forwardSet = !config.forward.isNullOrBlank(),
-        )
-    }
 
-    private fun describeActiveNetwork(): String {
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return "unknown"
-        val active = cm.activeNetwork ?: return "NONE"
-        val caps = cm.getNetworkCapabilities(active) ?: return "NONE"
-        return when {
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
-            else -> "OTHER"
-        }
-    }
+    /** ms since `onCreate`. Zero if the service hasn't started yet. */
+    fun serviceUptimeMs(): Long =
+        if (serviceStartMs == 0L) 0L else System.currentTimeMillis() - serviceStartMs
 
-    private fun readBattery(): Pair<Int?, Boolean> {
-        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-            ?: return Pair(null, false)
-        val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
-        val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
-        val pct = if (level >= 0 && scale > 0) (level * 100 / scale) else null
-        val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
-        val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
-            status == android.os.BatteryManager.BATTERY_STATUS_FULL
-        return Pair(pct, charging)
-    }
-
-    private fun publishToOwner(
+    private fun publishToSender(
         config: A8sAndroid.Config,
-        owner: String,
+        sender: String,
         body: String,
         files: List<File> = emptyList(),
     ) {
@@ -542,13 +505,13 @@ class A8sService : LifecycleService() {
             put("id", Ulid.new())
             put("date", isoNowUtc())
             put("from", config.device)
-            put("to", owner)
+            put("to", sender)
             put("content", body)
             put("files", filesArr)
         }.toString()
         val (ok, fail) = publishToAllRemotes(config, payload)
         A8sAndroid.log(
-            "CMD -> MQTT ${config.device} -> $owner " +
+            "CMD -> MQTT ${config.device} -> $sender " +
                 "(${body.length} chars, ${files.size} file(s); ${ok}/${ok + fail} remotes)",
         )
     }
