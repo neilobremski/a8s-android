@@ -18,6 +18,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.ContactsContract
 import android.telephony.SmsManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -172,32 +173,72 @@ class A8sService : LifecycleService() {
         }
     }
 
-    fun publishIncoming(fromPhone: String, body: String) {
+    fun publishIncoming(fromIdentity: String, body: String) {
         val config = A8sAndroid.config ?: return
-        val normalizedFrom = fromPhone.replace("[^0-9+]".toRegex(), "")
-        
-        val names = config.phonebook.filterValues { 
-            it.replace("[^0-9+]".toRegex(), "") == normalizedFrom 
-        }.keys
 
-        if (names.isEmpty()) {
-            A8sAndroid.log("Ignored incoming from $fromPhone (not in phonebook)")
-            return
+        // SMS gives us the raw phone number directly. RCS notifications give
+        // us the contact's display name (e.g. "Neil C. Obremski"). Try the
+        // phonebook with the input as-is first; if no match, look up the
+        // contact in ContactsContract to resolve display name → phone, then
+        // re-try the phonebook lookup.
+        val direct = fromIdentity.replace("[^0-9+]".toRegex(), "")
+        val phonebookNames = if (direct.isNotEmpty()) {
+            config.phonebook.filterValues { it.replace("[^0-9+]".toRegex(), "") == direct }.keys
+        } else {
+            emptySet()
+        }
+        val matchedNames = if (phonebookNames.isNotEmpty()) {
+            phonebookNames
+        } else {
+            val resolved = phoneNumberForDisplayName(fromIdentity)
+                ?.replace("[^0-9+]".toRegex(), "")
+            if (resolved.isNullOrEmpty()) {
+                A8sAndroid.log("Ignored incoming from $fromIdentity (no phone number resolved)")
+                return
+            }
+            val byContact = config.phonebook.filterValues {
+                it.replace("[^0-9+]".toRegex(), "") == resolved
+            }.keys
+            if (byContact.isEmpty()) {
+                A8sAndroid.log("Ignored incoming from $fromIdentity (resolved to $resolved, not in phonebook)")
+                return
+            }
+            byContact
         }
 
-        names.forEach { name ->
+        matchedNames.forEach { name ->
             val payload = JSONObject().apply {
                 put("from", name)
                 put("to", "all")
                 put("body", body)
             }.toString()
-            
+
             try {
                 mqttClient?.publish(config.remote.topic, MqttMessage(payload.toByteArray()))
                 A8sAndroid.log("SMS -> MQTT from $name")
             } catch (e: Exception) {
                 A8sAndroid.log("MQTT Publish Failed: " + e.message)
             }
+        }
+    }
+
+    private fun phoneNumberForDisplayName(name: String): String? {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED) {
+            A8sAndroid.log("Cannot resolve $name: READ_CONTACTS not granted")
+            return null
+        }
+        return try {
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} = ?",
+                arrayOf(name),
+                null
+            )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        } catch (e: Exception) {
+            A8sAndroid.log("Contacts lookup failed for $name: ${e.message}")
+            null
         }
     }
 
