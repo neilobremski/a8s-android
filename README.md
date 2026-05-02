@@ -46,6 +46,32 @@ The app is configured via a JSON file with the following schema:
   Outbound: agents `tell <name> "..."` → SMS to that number. Inbound: SMS
   from a known number publishes back to MQTT as that name.
 
+## Persistence — does it keep running with the screen off?
+
+Yes. The app is designed to stay online 24/7. Specifically:
+
+- **Foreground service.** `A8sService` calls `startForeground` in `onCreate`
+  and declares `foregroundServiceType="connectedDevice"` in the manifest,
+  which means Android won't kill it when the screen turns off. The
+  persistent notification you see in the status bar is the contract: as
+  long as it's showing, the OS leaves the service alone.
+- **Partial wake lock** (`PowerManager.PARTIAL_WAKE_LOCK`, tag `a8s:mqtt`)
+  keeps the CPU on so the MQTT client can keep its TCP connection alive.
+- **Wifi lock** (`WIFI_MODE_FULL_LOW_LATENCY` on API 29+, falling back to
+  `WIFI_MODE_FULL_HIGH_PERF` on older) keeps the wifi radio out of deep
+  sleep.
+- **Battery-optimization exemption.** Requested on first launch via
+  `requestBatteryOptimizationExclusion()`. Without it, Doze mode would
+  suspend the network and the MQTT subscription would silently miss
+  messages — grant it when prompted.
+- **Boot recovery.** `BootReceiver` re-launches the service on
+  `BOOT_COMPLETED`, so a reboot doesn't drop the bridge offline.
+
+What *will* stop the service: swiping the app out of recents on
+aggressive-battery OEMs (Xiaomi, OnePlus, Samsung in some modes), or
+denying the battery-optimization exemption. If messages stop arriving
+without an obvious cause, those are the first two things to check.
+
 ## Setup
 
 1. **Install:** Download the latest APK from the
