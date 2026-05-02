@@ -129,14 +129,29 @@ class A8sService : LifecycleService() {
         try {
             val json = JSONObject(payload)
             val to = json.optString("to")
-            val body = json.optString("body")
+            val from = json.optString("from")
+            val content = json.optString("content")
 
             val config = A8sAndroid.config ?: return
-            val phoneNumber = config.phonebook[to]
 
+            if (to == config.device) {
+                val forward = config.forward
+                if (forward.isNullOrBlank()) {
+                    A8sAndroid.log("MQTT -> drop (to=$to is this device but no forward configured)")
+                    return
+                }
+                val smsBody = if (from.isNotEmpty()) "$from: $content" else content
+                A8sAndroid.log("MQTT -> SMS forward to $forward (from $from)")
+                sendSms(forward, smsBody)
+                return
+            }
+
+            val phoneNumber = config.phonebook[to]
             if (phoneNumber != null) {
-                A8sAndroid.log("MQTT -> SMS to  ()")
-                sendSms(phoneNumber, body)
+                A8sAndroid.log("MQTT -> SMS to $to ($phoneNumber)")
+                sendSms(phoneNumber, content)
+            } else {
+                A8sAndroid.log("MQTT -> drop (to=$to not in phonebook and not this device)")
             }
         } catch (e: Exception) {
             A8sAndroid.log("MQTT Handle Error: " + e.message)

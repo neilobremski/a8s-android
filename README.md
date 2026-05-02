@@ -19,6 +19,7 @@ The app is configured via a JSON file with the following schema:
 ```json
 {
   "device": "android-pixel-7",
+  "forward": "+15550009999",
   "phonebook": {
     "Clover": "+15550001111",
     "Gerry": "+15550002222"
@@ -31,6 +32,19 @@ The app is configured via a JSON file with the following schema:
   }
 }
 ```
+
+- **`device`** — the participant name this phone identifies as on the a8s
+  cluster. When other agents `tell <device> "..."`, the message arrives at
+  this phone.
+- **`forward`** *(optional)* — phone number where messages addressed to
+  `device` are SMS'd. Without it, self-addressed messages are dropped.
+  Typical setup: this is the phone owner's own number, so agents can reach
+  the operator out-of-band. Replies SMS'd back into the device are routed
+  via the phonebook (so the operator's number must also be in the phonebook
+  under whatever participant name the cluster should see).
+- **`phonebook`** — `name → phone-number` map for the SMS gateway role.
+  Outbound: agents `tell <name> "..."` → SMS to that number. Inbound: SMS
+  from a known number publishes back to MQTT as that name.
 
 ## Setup
 
