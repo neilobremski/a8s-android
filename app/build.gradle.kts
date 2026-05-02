@@ -11,8 +11,24 @@ android {
         applicationId = "com.a8s.android"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
+    }
+
+    signingConfigs {
+        // Stable debug keystore committed at `app/debug.keystore`.
+        // Default Android Studio behavior generates a fresh keystore per
+        // workstation / CI runner, so consecutive builds produce APKs
+        // signed by different certs and Android refuses upgrade-in-place
+        // with "App not installed as package conflicts with an existing
+        // package." Committing a single keystore solves that for sideload.
+        // This is NOT for Play Store distribution.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

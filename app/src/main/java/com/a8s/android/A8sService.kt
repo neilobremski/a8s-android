@@ -53,7 +53,13 @@ class A8sService : LifecycleService() {
         wakeLock.acquire(10 * 60 * 1000L)
 
         val wm = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
-        wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "a8s:wifi")
+        val wifiMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        } else {
+            @Suppress("DEPRECATION")
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        }
+        wifiLock = wm.createWifiLock(wifiMode, "a8s:wifi")
         wifiLock.acquire()
 
         registerNetworkCallback()
@@ -149,6 +155,7 @@ class A8sService : LifecycleService() {
             val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 getSystemService(SmsManager::class.java)
             } else {
+                @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
             smsManager.sendTextMessage(to, null, body, null, null)
