@@ -16,7 +16,7 @@ class SmsNotificationListener : NotificationListenerService() {
         
         if (text.isEmpty()) return
 
-        A8sAndroid.log("Intercepted RCS: ")
+        A8sAndroid.log("Intercepted RCS from $title")
         A8sService.instance?.publishIncoming(title, text)
     }
 }

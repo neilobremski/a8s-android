@@ -28,10 +28,9 @@ import javax.net.ssl.SSLSocketFactory
 class A8sService : LifecycleService() {
 
     companion object {
-        private const val TAG = "A8sService"
         private const val CHANNEL_ID = "a8s_android_channel"
         private const val NOTIF_ID = 1001
-        
+
         var instance: A8sService? = null
             private set
     }
@@ -100,7 +99,7 @@ class A8sService : LifecycleService() {
                 override fun deliveryComplete(token: IMqttDeliveryToken?) {}
             })
 
-            A8sAndroid.log("MQTT Connecting to ")
+            A8sAndroid.log("MQTT Connecting to $serverUri")
             mqttClient!!.connect(opts, null, object : IMqttActionListener {
                 override fun onSuccess(asyncActionToken: IMqttToken?) {
                     isConnected.set(true)
@@ -126,35 +125,22 @@ class A8sService : LifecycleService() {
     }
 
     private fun handleMqttMessage(payload: String) {
-        try {
-            val json = JSONObject(payload)
-            val to = json.optString("to")
-            val from = json.optString("from")
-            val content = json.optString("content")
-
-            val config = A8sAndroid.config ?: return
-
-            if (to == config.device) {
-                val forward = config.forward
-                if (forward.isNullOrBlank()) {
-                    A8sAndroid.log("MQTT -> drop (to=$to is this device but no forward configured)")
-                    return
-                }
-                val smsBody = if (from.isNotEmpty()) "$from: $content" else content
-                A8sAndroid.log("MQTT -> SMS forward to $forward (from $from)")
-                sendSms(forward, smsBody)
-                return
+        val config = A8sAndroid.config ?: return
+        when (val route = decideRoute(payload, config)) {
+            is MqttRoute.Forward -> {
+                A8sAndroid.log("MQTT -> SMS forward to ${route.number}")
+                sendSms(route.number, route.smsBody)
             }
-
-            val phoneNumber = config.phonebook[to]
-            if (phoneNumber != null) {
-                A8sAndroid.log("MQTT -> SMS to $to ($phoneNumber)")
-                sendSms(phoneNumber, content)
-            } else {
-                A8sAndroid.log("MQTT -> drop (to=$to not in phonebook and not this device)")
+            is MqttRoute.Phonebook -> {
+                A8sAndroid.log("MQTT -> SMS to ${route.name} (${route.number})")
+                sendSms(route.number, route.smsBody)
             }
-        } catch (e: Exception) {
-            A8sAndroid.log("MQTT Handle Error: " + e.message)
+            is MqttRoute.Drop -> {
+                A8sAndroid.log("MQTT -> drop (${route.reason})")
+            }
+            is MqttRoute.ParseError -> {
+                A8sAndroid.log("MQTT Handle Error: ${route.reason}")
+            }
         }
     }
 
@@ -180,7 +166,7 @@ class A8sService : LifecycleService() {
         }.keys
 
         if (names.isEmpty()) {
-            A8sAndroid.log("Ignored incoming from  (not in phonebook)")
+            A8sAndroid.log("Ignored incoming from $fromPhone (not in phonebook)")
             return
         }
 
@@ -193,7 +179,7 @@ class A8sService : LifecycleService() {
             
             try {
                 mqttClient?.publish(config.remote.topic, MqttMessage(payload.toByteArray()))
-                A8sAndroid.log("SMS -> MQTT from ")
+                A8sAndroid.log("SMS -> MQTT from $name")
             } catch (e: Exception) {
                 A8sAndroid.log("MQTT Publish Failed: " + e.message)
             }

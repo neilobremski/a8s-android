@@ -24,7 +24,7 @@ class SmsReceiver : BroadcastReceiver() {
             val from = msg.displayOriginatingAddress ?: continue
             val body = msg.displayMessageBody ?: ""
             
-            A8sAndroid.log("Received SMS: ")
+            A8sAndroid.log("Received SMS from $from")
             A8sService.instance?.publishIncoming(from, body)
         }
     }

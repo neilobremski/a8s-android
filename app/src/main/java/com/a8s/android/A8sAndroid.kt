@@ -25,7 +25,7 @@ class A8sAndroid : Application() {
 
         fun log(msg: String) {
             val timestamp = java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-            val line = "[] "
+            val line = "[$timestamp] $msg"
             Log.i(TAG, line)
             synchronized(logs) {
                 logs.add(line)
@@ -65,7 +65,7 @@ class A8sAndroid : Application() {
 
                     config = Config(device, forward, phonebookMap, remote)
                     saveUri(context, targetUri)
-                    log("Config loaded: ")
+                    log("Config loaded: device=$device, forward=${forward ?: "(none)"}, phonebook=${phonebookMap.size}")
                     return true
                 }
             } catch (e: Exception) {
