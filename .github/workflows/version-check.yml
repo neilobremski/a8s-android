@@ -1,0 +1,30 @@
+name: Version bump check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  versionName-bumped:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare versionName against base
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          extract() {
+            awk -F'"' '/versionName *= *"/{print $2; exit}' "$1"
+          }
+          base_version=$(git show "${BASE_SHA}:app/build.gradle.kts" | extract /dev/stdin)
+          head_version=$(extract app/build.gradle.kts)
+          echo "base versionName: ${base_version}"
+          echo "head versionName: ${head_version}"
+          if [ "${base_version}" = "${head_version}" ]; then
+            echo "::error file=app/build.gradle.kts::versionName must be bumped (still '${head_version}'). Update versionName (and ideally versionCode) before merging."
+            exit 1
+          fi
+          echo "OK — versionName changed."
