@@ -89,6 +89,16 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(loadBtn)
 
+        // Primary one-tap CTA — bundles every dangerous runtime perm,
+        // the screen-capture projection consent, and (if needed) the
+        // Notification Listener settings page. Battery exemption is
+        // already prompted at app start so it's not in this flow.
+        val grantAllBtn = Button(this).apply {
+            text = "Grant All Permissions"
+            setOnClickListener { grantAllPermissions() }
+        }
+        root.addView(grantAllBtn)
+
         val notifAccessBtn = Button(this).apply {
             text = "Open Notification Access (for RCS)"
             setOnClickListener {
@@ -99,10 +109,7 @@ class MainActivity : AppCompatActivity() {
 
         val captureBtn = Button(this).apply {
             text = "Enable Screen Capture (for /screenshot)"
-            setOnClickListener {
-                val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                projectionLauncher.launch(mgr.createScreenCaptureIntent())
-            }
+            setOnClickListener { launchProjectionConsent() }
         }
         root.addView(captureBtn)
 
@@ -156,19 +163,62 @@ class MainActivity : AppCompatActivity() {
     private fun requiredDangerousPermissions(): List<String> {
         // Permissions Android marks "dangerous" — every one of these requires
         // a runtime grant on API 23+ regardless of manifest declaration.
-        // POST_NOTIFICATIONS is only dangerous from API 33 (Tiramisu) onward;
-        // older devices get the grant implicitly and don't need it requested.
+        // POST_NOTIFICATIONS / READ_MEDIA_* are only dangerous from API 33
+        // (Tiramisu) onward; older devices get them implicitly via the
+        // legacy READ_EXTERNAL_STORAGE shape.
         val perms = mutableListOf(
             Manifest.permission.SEND_SMS,
             Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_SMS,
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.READ_CONTACTS,
+            // /photo, /video
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            // /location
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             perms += Manifest.permission.POST_NOTIFICATIONS
+            perms += Manifest.permission.READ_MEDIA_IMAGES
+            perms += Manifest.permission.READ_MEDIA_AUDIO
         }
         return perms
+    }
+
+    private fun launchProjectionConsent() {
+        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        projectionLauncher.launch(mgr.createScreenCaptureIntent())
+    }
+
+    /**
+     * Bundle the entire grant flow into one tap:
+     * 1. Request every dangerous runtime permission.
+     * 2. After the user dismisses that dialog, fire the screen-capture
+     *    projection-consent system dialog (because consent is held
+     *    in-memory and is lost on process restart — re-grant lives here
+     *    so /screenshot starts working again after an in-place upgrade).
+     * 3. If notification-listener access (RCS) isn't already granted,
+     *    open its settings page (special permission — can't be requested
+     *    via the runtime dialog).
+     *
+     * Battery-optimization exemption is auto-prompted on app start in
+     * `A8sAndroid` and is intentionally NOT bundled here.
+     */
+    private fun grantAllPermissions() {
+        // Always request — even already-granted perms are tolerated by
+        // the launcher; the system just immediately resolves them as
+        // GRANTED and the per-perm flow doesn't reprompt.
+        val perms = requiredDangerousPermissions()
+        permissionLauncher.launch(perms.toTypedArray())
+        // The projection dialog is launched right after — Android queues
+        // the runtime perm dialog first; this lands once the user
+        // dismisses it.
+        launchProjectionConsent()
+        if (!isNotificationAccessGranted()) {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }
     }
 
     private fun missingPermissions(): List<String> = requiredDangerousPermissions().filter {

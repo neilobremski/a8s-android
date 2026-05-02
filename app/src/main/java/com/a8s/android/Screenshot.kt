@@ -38,12 +38,17 @@ class Screenshot(
         val height = metrics.heightPixels
         val density = metrics.densityDpi
 
-        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        // maxImages=4 — VirtualDisplay's first 1-2 frames after creation
+        // are typically uninitialized (blank-buffer) before Android draws
+        // the actual screen content into the surface. We let the buffer
+        // accumulate a few frames, then `acquireLatestImage()` after a
+        // short settle delay returns the newest one with real content.
+        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, MAX_BUFFERED_FRAMES)
         val thread = HandlerThread("a8s-screenshot").apply { start() }
         val handler = Handler(thread.looper)
 
-        val ready = CountDownLatch(1)
-        reader.setOnImageAvailableListener({ ready.countDown() }, handler)
+        val firstFrame = CountDownLatch(1)
+        reader.setOnImageAvailableListener({ firstFrame.countDown() }, handler)
 
         val virtualDisplay = projection.createVirtualDisplay(
             "a8s-screenshot",
@@ -54,7 +59,10 @@ class Screenshot(
         )
 
         try {
-            if (!ready.await(timeoutMs, TimeUnit.MILLISECONDS)) return false
+            if (!firstFrame.await(timeoutMs, TimeUnit.MILLISECONDS)) return false
+            // First frame fired — let a few more queue up so the buffer
+            // contains real content (not the initial blank surface).
+            Thread.sleep(SETTLE_MS)
             val image = reader.acquireLatestImage() ?: return false
             try {
                 val plane = image.planes[0]
@@ -87,5 +95,11 @@ class Screenshot(
     companion object {
         const val DEFAULT_TIMEOUT_MS: Long = 3000
         const val PNG_QUALITY: Int = 100
+        const val MAX_BUFFERED_FRAMES: Int = 4
+        // ~12 frames at 60Hz — empirically enough for the system UI to
+        // composite real content into the VirtualDisplay surface across
+        // a range of devices. Too short and we capture a blank/initial
+        // buffer; too long is just latency.
+        const val SETTLE_MS: Long = 200
     }
 }
