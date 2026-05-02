@@ -168,14 +168,21 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    private fun installedVersion(): String = try {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        "v${info.versionName} (build ${info.longVersionCode})"
+    } catch (e: Exception) {
+        "v?"
+    }
+
     private fun updateUI() {
         val config = A8sAndroid.config
         val missing = missingPermissions()
         if (config == null) {
-            statusText.text = "Status: Not Configured"
+            statusText.text = "a8s Android ${installedVersion()}\nStatus: Not Configured"
             configDetail.text = "Please load an a8s.json file to start."
         } else {
-            statusText.text = "Status: Configured as " + config.device
+            statusText.text = "a8s Android ${installedVersion()}\nStatus: Configured as " + config.device
             val sb = StringBuilder()
             sb.append("Remote URL: ").append(config.remote.url).append("\n")
             sb.append("Topic: ").append(config.remote.topic).append("\n")
