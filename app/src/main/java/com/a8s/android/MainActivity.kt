@@ -1,15 +1,21 @@
 package com.a8s.android
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -27,6 +33,18 @@ class MainActivity : AppCompatActivity() {
                 updateUI()
             }
         }
+    }
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val granted = results.count { it.value }
+        val denied = results.filterValues { !it }.keys
+        A8sAndroid.log("Permissions: $granted granted, ${denied.size} denied")
+        if (denied.isNotEmpty()) {
+            A8sAndroid.log("Denied: ${denied.joinToString(",") { it.substringAfterLast(".") }}")
+        }
+        updateUI()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,6 +69,14 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(loadBtn)
 
+        val notifAccessBtn = Button(this).apply {
+            text = "Open Notification Access (for RCS)"
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+        }
+        root.addView(notifAccessBtn)
+
         configDetail = TextView(this).apply {
             textSize = 14f
             setPadding(0, 32, 0, 32)
@@ -71,25 +97,68 @@ class MainActivity : AppCompatActivity() {
                 0,
                 1f
             )
-            setBackgroundColor(0xFFEEEEEE.toInt())
+            // Hardcoded dark-on-light to stay readable regardless of system
+            // DayNight theme — the inherited theme color was white on light
+            // gray and unreadable in dark mode.
+            setBackgroundColor(0xFFF5F5F5.toInt())
         }
         logText = TextView(this).apply {
             textSize = 12f
             setPadding(16, 16, 16, 16)
             typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(0xFF111111.toInt())
         }
         logScroll.addView(logText)
         root.addView(logScroll)
 
         setContentView(root)
-        
+
         A8sAndroid.onLogListener = {
-            runOnUiThread { 
+            runOnUiThread {
                 logText.text = A8sAndroid.getLogs()
                 logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
             }
         }
-        
+
+        requestMissingPermissions()
+        updateUI()
+    }
+
+    private fun requiredDangerousPermissions(): List<String> {
+        // Permissions Android marks "dangerous" — every one of these requires
+        // a runtime grant on API 23+ regardless of manifest declaration.
+        // POST_NOTIFICATIONS is only dangerous from API 33 (Tiramisu) onward;
+        // older devices get the grant implicitly and don't need it requested.
+        val perms = mutableListOf(
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.RECEIVE_SMS,
+            Manifest.permission.READ_SMS,
+            Manifest.permission.READ_PHONE_STATE,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms += Manifest.permission.POST_NOTIFICATIONS
+        }
+        return perms
+    }
+
+    private fun missingPermissions(): List<String> = requiredDangerousPermissions().filter {
+        ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestMissingPermissions() {
+        val missing = missingPermissions()
+        if (missing.isNotEmpty()) {
+            permissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun isNotificationAccessGranted(): Boolean =
+        NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName)
+
+    override fun onResume() {
+        super.onResume()
+        // Returning from Settings may have changed permission or notification-
+        // listener status; refresh so the UI reflects reality.
         updateUI()
     }
 
@@ -100,6 +169,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUI() {
         val config = A8sAndroid.config
+        val missing = missingPermissions()
         if (config == null) {
             statusText.text = "Status: Not Configured"
             configDetail.text = "Please load an a8s.json file to start."
@@ -108,7 +178,16 @@ class MainActivity : AppCompatActivity() {
             val sb = StringBuilder()
             sb.append("Remote URL: ").append(config.remote.url).append("\n")
             sb.append("Topic: ").append(config.remote.topic).append("\n")
-            sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)")
+            sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)\n")
+            if (missing.isEmpty()) {
+                sb.append("Permissions: all granted\n")
+            } else {
+                sb.append("Permissions missing: ")
+                sb.append(missing.joinToString(", ") { it.substringAfterLast(".") })
+                sb.append("\n")
+            }
+            sb.append("Notification access (RCS): ")
+            sb.append(if (isNotificationAccessGranted()) "granted" else "NOT granted — tap button above")
             configDetail.text = sb.toString()
         }
         logText.text = A8sAndroid.getLogs()
