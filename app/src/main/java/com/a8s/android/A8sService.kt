@@ -28,6 +28,7 @@ import androidx.lifecycle.LifecycleService
 import org.eclipse.paho.client.mqttv3.*
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLSocketFactory
 
@@ -208,12 +209,79 @@ class A8sService : LifecycleService() {
 
     private fun executeCommand(cmd: MqttRoute.Command) {
         val config = A8sAndroid.config ?: return
+        // /update is async — it does HTTP + filesystem work. Run it on a
+        // worker thread so we don't block paho's network thread; reply
+        // arrives whenever it's ready.
+        if (cmd.name == "update") {
+            Thread { runUpdateCommand(config, cmd) }.start()
+            return
+        }
         val reply = when (cmd.name) {
             "info" -> Commands.renderInfo(snapshotInfo(config))
             "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
             else -> Commands.renderUnknown(cmd.name)
         }
         publishToOwner(config, cmd.owner, reply)
+    }
+
+    private fun runUpdateCommand(config: A8sAndroid.Config, cmd: MqttRoute.Command) {
+        val checkOnly = cmd.args.any { it == "--check" || it == "-c" }
+        val explicitUrl = cmd.args.firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
+        try {
+            val installedVersion = installedVersionName()
+            if (checkOnly) {
+                val latest = Updater.fetchLatestRelease()
+                publishToOwner(config, cmd.owner, Updater.renderCheck(installedVersion, latest))
+                return
+            }
+            val (downloadUrl, fileName) = if (explicitUrl != null) {
+                Pair(explicitUrl, "explicit-${System.currentTimeMillis()}.apk")
+            } else {
+                val latest = Updater.fetchLatestRelease()
+                if (Updater.compareVersions(installedVersion, latest.versionName) >= 0) {
+                    publishToOwner(
+                        config, cmd.owner,
+                        "Already up to date (installed v$installedVersion, latest ${latest.tagName}). " +
+                            "Use /update <url> to force a specific build.",
+                    )
+                    return
+                }
+                publishToOwner(
+                    config, cmd.owner,
+                    "Update available: v$installedVersion → ${latest.tagName} " +
+                        "(${Updater.humanSize(latest.sizeBytes)}). Downloading…",
+                )
+                Pair(latest.apkUrl, latest.apkName)
+            }
+            val dest = File(File(cacheDir, "updates"), fileName)
+            Updater.downloadTo(downloadUrl, dest)
+            A8sAndroid.log("Update downloaded to ${dest.absolutePath} (${dest.length()} bytes)")
+            triggerInstallPrompt(dest)
+            publishToOwner(
+                config, cmd.owner,
+                "Downloaded ${Updater.humanSize(dest.length())}. Install dialog launched on phone — " +
+                    "tap Install on the device to apply.",
+            )
+        } catch (e: Exception) {
+            A8sAndroid.log("Update failed: ${e.message}")
+            publishToOwner(config, cmd.owner, "Update failed: ${e.message}")
+        }
+    }
+
+    private fun installedVersionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+    } catch (e: Exception) {
+        "?"
+    }
+
+    private fun triggerInstallPrompt(apk: File) {
+        val authority = "$packageName.fileprovider"
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, authority, apk)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(intent)
     }
 
     private fun snapshotInfo(config: A8sAndroid.Config): Commands.InfoSnapshot {

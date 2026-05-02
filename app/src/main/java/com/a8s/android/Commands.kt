@@ -58,7 +58,7 @@ object Commands {
     }
 
     fun renderUnknown(name: String): String =
-        "unknown command: /$name\nknown: /info, /logs [N]"
+        "unknown command: /$name\nknown: /info, /logs [N], /update [--check|<url>]"
 
     private fun formatDuration(ms: Long): String {
         if (ms < 0) return "unknown"
