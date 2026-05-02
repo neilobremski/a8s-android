@@ -47,6 +47,7 @@ class A8sAndroid : Application() {
                     
                     val device = json.getString("device")
                     val forward: String? = json.optString("forward", "").ifBlank { null }
+                    val owner: String? = json.optString("owner", "").ifBlank { null }
                     val phonebookMap = mutableMapOf<String, String>()
                     val phonebookJson = json.getJSONObject("phonebook")
                     val keys = phonebookJson.keys()
@@ -63,9 +64,14 @@ class A8sAndroid : Application() {
                         password = remoteJson.optString("password", "")
                     )
 
-                    config = Config(device, forward, phonebookMap, remote)
+                    config = Config(device, forward, owner, phonebookMap, remote)
                     saveUri(context, targetUri)
-                    log("Config loaded: device=$device, forward=${forward ?: "(none)"}, phonebook=${phonebookMap.size}")
+                    log(
+                        "Config loaded: device=$device, " +
+                            "forward=${forward ?: "(none)"}, " +
+                            "owner=${owner ?: "(none)"}, " +
+                            "phonebook=${phonebookMap.size}"
+                    )
                     return true
                 }
             } catch (e: Exception) {
@@ -89,6 +95,7 @@ class A8sAndroid : Application() {
     data class Config(
         val device: String,
         val forward: String?,
+        val owner: String?,
         val phonebook: Map<String, String>,
         val remote: RemoteConfig
     )

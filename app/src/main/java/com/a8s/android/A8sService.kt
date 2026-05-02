@@ -52,10 +52,12 @@ class A8sService : LifecycleService() {
     private lateinit var wifiLock: WifiManager.WifiLock
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val publishDedup = PublishDedup()
+    private var serviceStartMs: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        serviceStartMs = System.currentTimeMillis()
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification("Starting..."))
 
@@ -186,6 +188,10 @@ class A8sService : LifecycleService() {
                 A8sAndroid.log("MQTT -> SMS to ${route.name} (${route.number}): ${preview(route.smsBody)}")
                 sendSms(route.number, route.smsBody)
             }
+            is MqttRoute.Command -> {
+                A8sAndroid.log("/${route.name} from owner=${route.owner}")
+                executeCommand(route)
+            }
             is MqttRoute.Drop -> {
                 A8sAndroid.log("MQTT -> drop (${route.reason})")
             }
@@ -198,6 +204,84 @@ class A8sService : LifecycleService() {
     private fun preview(s: String, max: Int = 200): String {
         val flat = s.replace("\n", " ").trim()
         return if (flat.length <= max) flat else "${flat.take(max)}…"
+    }
+
+    private fun executeCommand(cmd: MqttRoute.Command) {
+        val config = A8sAndroid.config ?: return
+        val reply = when (cmd.name) {
+            "info" -> Commands.renderInfo(snapshotInfo(config))
+            "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
+            else -> Commands.renderUnknown(cmd.name)
+        }
+        publishToOwner(config, cmd.owner, reply)
+    }
+
+    private fun snapshotInfo(config: A8sAndroid.Config): Commands.InfoSnapshot {
+        val pInfo = try {
+            packageManager.getPackageInfo(packageName, 0)
+        } catch (_: Exception) { null }
+        val appVersion = if (pInfo != null) {
+            "v${pInfo.versionName} (build ${pInfo.longVersionCode})"
+        } else "v?"
+        val networkType = describeActiveNetwork()
+        val (battPct, charging) = readBattery()
+        return Commands.InfoSnapshot(
+            appVersion = appVersion,
+            deviceModel = "${Build.MANUFACTURER} ${Build.MODEL}",
+            androidRelease = Build.VERSION.RELEASE ?: "?",
+            sdkInt = Build.VERSION.SDK_INT,
+            mqttConnected = isConnected.get(),
+            mqttBroker = config.remote.url,
+            mqttTopic = config.remote.topic,
+            networkType = networkType,
+            batteryPercent = battPct,
+            batteryCharging = charging,
+            uptimeMs = if (serviceStartMs == 0L) 0L else System.currentTimeMillis() - serviceStartMs,
+            phonebookSize = config.phonebook.size,
+            ownerSet = !config.owner.isNullOrBlank(),
+            forwardSet = !config.forward.isNullOrBlank(),
+        )
+    }
+
+    private fun describeActiveNetwork(): String {
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return "unknown"
+        val active = cm.activeNetwork ?: return "NONE"
+        val caps = cm.getNetworkCapabilities(active) ?: return "NONE"
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
+            else -> "OTHER"
+        }
+    }
+
+    private fun readBattery(): Pair<Int?, Boolean> {
+        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?: return Pair(null, false)
+        val level = intent.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+        val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+        val pct = if (level >= 0 && scale > 0) (level * 100 / scale) else null
+        val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+        val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+            status == android.os.BatteryManager.BATTERY_STATUS_FULL
+        return Pair(pct, charging)
+    }
+
+    private fun publishToOwner(config: A8sAndroid.Config, owner: String, body: String) {
+        val payload = JSONObject().apply {
+            put("id", Ulid.new())
+            put("date", isoNowUtc())
+            put("from", config.device)
+            put("to", owner)
+            put("content", body)
+            put("files", org.json.JSONArray())
+        }.toString()
+        try {
+            mqttClient?.publish(config.remote.topic, MqttMessage(payload.toByteArray()))
+            A8sAndroid.log("CMD -> MQTT ${config.device} -> $owner (${body.length} chars)")
+        } catch (e: Exception) {
+            A8sAndroid.log("MQTT Publish Failed: ${e.message}")
+        }
     }
 
     private fun sendSms(to: String, body: String) {

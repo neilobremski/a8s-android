@@ -5,6 +5,14 @@ import org.json.JSONObject
 sealed class MqttRoute {
     data class Forward(val number: String, val smsBody: String) : MqttRoute()
     data class Phonebook(val name: String, val number: String, val smsBody: String) : MqttRoute()
+    /**
+     * The owner has issued a `/command` to the device. `name` is the bare
+     * verb (e.g. "info"), `args` is whatever followed split on whitespace.
+     * Owner authorization is established at routing time (this branch is
+     * only chosen when `from == config.owner`); the executor doesn't
+     * re-check.
+     */
+    data class Command(val owner: String, val name: String, val args: List<String>) : MqttRoute()
     data class Drop(val reason: String) : MqttRoute()
     data class ParseError(val reason: String) : MqttRoute()
 }
@@ -34,6 +42,14 @@ fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
     }
 
     if (to == config.device) {
+        // Owner-issued slash command. The owner is the unforgeable identity
+        // for privileged on-device actions; the host's a8s router force-
+        // stamps `from` so we can trust it. Bypasses the phonebook gate
+        // that the Forward path uses — owner authorization is the gate.
+        val owner = config.owner
+        if (!owner.isNullOrBlank() && from == owner && content.startsWith("/")) {
+            return parseCommand(owner, content)
+        }
         val forward = config.forward
         if (forward.isNullOrBlank()) {
             return MqttRoute.Drop("to=$to is this device but no forward configured")
@@ -53,4 +69,18 @@ fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
     val number = config.phonebook[to]
         ?: return MqttRoute.Drop("to=$to not in phonebook and not this device")
     return MqttRoute.Phonebook(to, number, content)
+}
+
+private fun parseCommand(owner: String, content: String): MqttRoute {
+    // content begins with "/" by contract. Strip it, split on whitespace,
+    // first token is the verb (lowercased for canonicalization), the rest
+    // are positional args. Empty verb => Drop with a clear reason rather
+    // than handing an empty Command to the executor.
+    val tokens = content.removePrefix("/").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    if (tokens.isEmpty()) {
+        return MqttRoute.Drop("empty command from owner=$owner")
+    }
+    val name = tokens[0].lowercase()
+    val args = tokens.drop(1)
+    return MqttRoute.Command(owner, name, args)
 }

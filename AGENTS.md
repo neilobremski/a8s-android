@@ -1,44 +1,266 @@
-# A8s‑Android
+# a8s-android — agent onboarding
 
-## What an agent might miss
+This file is the dense, accumulated knowledge a fresh agent (human or LLM)
+needs to be productive in this repo without re-deriving everything from
+the source tree. Keep it terse. Update when you learn something a future
+contributor would want to know — especially gotchas that cost you time.
 
-- **Build shortcut** – `./gradlew assembleDebug`: produces `app/build/outputs/apk/debug/app-debug.apk`.
-- **Platform** – Android 17 SDK, Kotlin 1.9‑ish, Java 17.
-- **Permissions needed at install time**:
-  - SMS (SEND_SMS, RECEIVE_SMS, READ_SMS)
-  - Notifications (POST_NOTIFICATIONS, BIND_NOTIFICATION_LISTENER_SERVICE)
-  - Battery optimization exemption
-  - Foreground service & wake‑lock
-- **Runtime config** – the app loads a JSON file named `a8s.json` via the Storage Access Framework. The schema is shown in the README.
-- **Default launch** – run `adb install app/build/outputs/apk/debug/app-debug.apk` and open the app. The UI will prompt for the config file.
-- **Gradle wrapper** – uses Gradle 8.5. On Windows call `./gradlew.bat`.
-- **Project name** – `a8s-android`. Refer to this when filtering Android logs.
-- **Service** – a foreground `A8sService` (type `connectedDevice`) keeps the device online at all times.
-- **Test/CI** – unit tests live in `app/src/test/...`; CI runs Detekt + tests + APK build via `.github/workflows/ci.yml`.
+## What this is
 
-## Quick start
+An Android app that bridges the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
+cluster to a phone. Acts as a participant on the MQTT topic and:
 
-1. Clone the repo.
-2. Run `./gradlew assembleDebug`.
-3. Install the APK on a device:
-   ```bash
-   adb install app/build/outputs/apk/debug/app-debug.apk
-   ```
-4. Open the app, grant the required permissions, and load `a8s.json`.
-5. The bridge will immediately start listening for SMS and MQTT.
+- **MQTT → SMS gateway** — `tell <name> "..."` from any cluster agent
+  becomes an SMS to whatever number that name maps to in the local
+  phonebook. The phone is invisible to senders; opacity per a8s design.
+- **SMS/RCS → MQTT** — incoming SMS or intercepted Google Messages RCS
+  notifications publish back to the cluster as if they came from the
+  matched phonebook participant.
+- **Self-receive (forward)** — `tell <device-name>` SMSs the operator at
+  a configured `forward` number, prefixed with the sender name.
+- **Owner /commands** — a single trusted `owner` participant can issue
+  `/info`, `/logs [N]`, etc. and get a `tell`'d response back.
 
-## Troubleshooting
+## Module map (under `app/src/main/java/com/a8s/android/`)
 
-- **Package not found**: On Android 13+ the app must have permission to access the notification listener. Go to `Settings > Apps > a8s Android > Advanced > Notification access` and enable it.
-- **Battery optimization kills service**: Add the app to the exemption list via `Settings > Battery > Battery optimization > All apps > a8s Android > Never`. Or run `adb shell am start -a android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS` to open the panel.
-- **MQTT connection fails**: Verify that the broker URL in `a8s.json` uses the correct port and TLS settings.
-- **Log output**: Use `adb logcat -s com.a8s.android` to restrict logs to this app.
+| File | Role |
+|---|---|
+| `A8sAndroid.kt` | `Application` subclass. Owns the static `Config` (parsed from JSON), the in-app log ring (50 lines, surfaced to the UI via `onLogListener`), and `loadConfig`/`saveUri`/`getSavedUri` for SAF persistence. Triggers `requestBatteryOptimizationExclusion` on first launch. |
+| `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds the MQTT client (Paho v3 standalone JAR), the wake/wifi locks, the `PublishDedup` cache, and the SMS-sent broadcast receiver. Routes inbound MQTT via `decideRoute` and acts on the result. |
+| `MainActivity.kt` | Configuration / status UI. Requests dangerous perms via `RequestMultiplePermissions`. Buttons: **Load Configuration JSON** (SAF), **Open Notification Access (for RCS)**. Shows installed version + grant state in the status panel. |
+| `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent` (modern API; older PDU-extraction path was removed). Forwards to `A8sService.publishIncoming`. |
+| `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Forwards to `A8sService.publishIncoming`. |
+| `BootReceiver.kt` | Re-launches `A8sService` on `BOOT_COMPLETED`. |
+| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Variants: `Forward` / `Phonebook` / `Command(owner, name, args)` / `Drop(reason)` / `ParseError(reason)`. **All routing logic lives here so it's unit-testable.** Service layer just dispatches. |
+| `Commands.kt` | Pure formatters for slash-command output. `InfoSnapshot` data class is filled in by `A8sService.snapshotInfo()` and passed to `renderInfo`. `renderLogs(logs, n)` does tail+header. Keeps Android-specific `Build`/`BatteryManager`/`ConnectivityManager` calls out of the formatter so it tests without a Context. |
+| `PublishDedup.kt` | Bounded LRU keyed on `<recipient>\|<body>`, default 5-minute window / 100 entries. Stops the duplicate-publish bug from Google Messages re-posting notifications. |
+| `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
 
-## File references
+Tests under `app/src/test/java/com/a8s/android/` mirror the pure-Kotlin
+files. Anything that touches Android framework classes lives in the
+service layer and is exercised end-to-end on a real phone.
 
-- `app/src/main/AndroidManifest.xml` – declares all required Android permissions.
-- `app/src/main/java/com/a8s/android/A8sService.kt` – foreground service.
-- `app/src/main/java/com/a8s/android/SmsReceiver.kt` – handles inbound SMS.
-- `app/src/main/java/com/a8s/android/SmsNotificationListener.kt` – intercepts RCS notifications.
-- `gradle/wrapper/gradle-wrapper.properties` – uses Gradle 8.5.
-- `README.md` – summary of features and configuration.
+## Wire format (the a8s envelope)
+
+Every MQTT message — outbound *and* inbound — is JSON of this exact shape:
+
+```json
+{
+  "id":      "<26-char Crockford-base32 ULID>",
+  "date":    "2026-05-02T03:14:15Z",
+  "from":    "<participant>",
+  "to":      "<participant or alias>",
+  "content": "<text>",
+  "files":   []
+}
+```
+
+- `id` is **required**. The host's `network.py:316-318` drops envelopes
+  with no/invalid ULID. Use `Ulid.new()`. (Bug history: legacy outbound
+  used `body` instead of `content` and `to: "all"` — both broke routing
+  on the host side. Fixed; do not re-introduce.)
+- `from` is force-stamped by the host's a8s router on its own outbox
+  pass (see `apps/a8s/mailbox.py:526` upstream). On our side, treat
+  `from` as the **unforgeable identity** for authorization decisions.
+- `files: []` is mandatory shape; we don't currently send attachments.
+
+## Routing decision (decideRoute)
+
+Pure function. Order of checks matters — early returns shape the
+contract:
+
+1. **Self-loopback.** `from == config.device` → `Drop`. Brokers echo our
+   own publishes back to every subscriber on the topic; without this
+   filter we'd try to re-route them as fresh SMS, and (when `to`
+   matches a phonebook entry) infinite-loop.
+2. **Missing `to`.** → `Drop`.
+3. **`to == config.device`** (this device is the recipient):
+   - **Owner command.** If `owner` is set AND `from == owner` AND
+     `content.startsWith("/")` → `Command(owner, verb, args)`. Verb is
+     lowercased; empty verb (`"/   "`) drops. Bypasses phonebook gate
+     because owner *is* the gate.
+   - **Forward.** Else, `forward` must be set, and `from` must be a
+     phonebook key (sender verification — only known cluster
+     participants can SMS the operator). SMS body is `"<from>: <content>"`.
+4. **`to` in phonebook** → `Phonebook(name, number, content)`, SMSed to
+   that number with the bare content (no `from:` prefix; the phonebook
+   target is a stranger, the sender's identity isn't theirs to see).
+5. **Else** → `Drop("not in phonebook and not this device")`.
+
+## Configuration JSON (`a8s.json`)
+
+```json
+{
+  "device":   "<this phone's participant name>",
+  "forward":  "<optional: number for messages addressed to device>",
+  "owner":    "<optional: the only name allowed to run /commands>",
+  "phonebook": { "Clover": "+15550001111", "Gerry": "+15550002222" },
+  "remote":   {
+    "url":      "ssl://broker:8883",
+    "topic":    "...",
+    "username": "...",
+    "password": "..."
+  }
+}
+```
+
+- The user picks the file via Storage Access Framework; the URI is
+  persisted (`takePersistableUriPermission`) so reloads work post-reboot.
+- `phonebook` is the union of (a) outbound: `name → number` for SMSing
+  cluster sends; (b) inbound: reverse-lookup for naming the publisher
+  on SMS→MQTT.
+- `forward` is typically the operator's own number. Without it,
+  self-addressed messages drop.
+- `owner` defaults to none — without it, slash-prefixed content from
+  anyone falls through to the regular forward path (which still gates
+  on phonebook membership).
+
+## Permissions
+
+| Permission | Why | Granted via |
+|---|---|---|
+| `SEND_SMS` / `RECEIVE_SMS` / `READ_SMS` | gateway IO | runtime prompt on launch |
+| `READ_PHONE_STATE` | required for SMS APIs | runtime prompt |
+| `READ_CONTACTS` | resolve RCS notification's contact display name → phone number for the phonebook lookup | runtime prompt |
+| `POST_NOTIFICATIONS` | foreground service notification on API 33+ | runtime prompt (gated on `>= TIRAMISU`) |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | RCS interception | special — Settings → Notification access (manifest declares it; the **Open Notification Access** button in MainActivity opens the page) |
+| `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `WAKE_LOCK`, `FOREGROUND_SERVICE*`, `RECEIVE_BOOT_COMPLETED`, `SCHEDULE_EXACT_ALARM`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | normal/special — implicit at install | n/a |
+
+Runtime perms are requested as a single batch in `MainActivity.requestMissingPermissions()` (a `RequestMultiplePermissions` launcher). `onResume` re-checks both the dangerous perms and the notification-listener flag so returning from Settings updates the status panel.
+
+## Persistence (24/7 operation)
+
+The phone is meant to stay online with the screen off:
+- Foreground service with `connectedDevice` type → OS won't kill it.
+- `PARTIAL_WAKE_LOCK` → CPU stays awake for the MQTT TCP keepalive.
+- `WIFI_MODE_FULL_LOW_LATENCY` (API 29+) / `FULL_HIGH_PERF` fallback
+  → wifi radio doesn't enter deep sleep.
+- Battery optimization exemption requested at launch → Doze doesn't
+  cut the network.
+- `BootReceiver` re-launches on `BOOT_COMPLETED`.
+
+What *will* break it: swiping the app out of recents on aggressive-battery
+OEMs (Xiaomi, OnePlus, Samsung in some battery modes), revoked battery
+exemption, or the user disabling notification access while RCS routing
+is needed.
+
+## Build & verification
+
+```bash
+# One-time toolchain (macOS)
+brew install openjdk@17
+brew install --cask android-commandlinetools
+sdkmanager --licenses
+sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+
+# Pre-push gate (the same command the .githooks/pre-push hook runs):
+./gradlew detekt test :app:compileDebugKotlin
+# Or full build:
+./gradlew assembleDebug   # → app/build/outputs/apk/debug/app-debug.apk
+```
+
+To wire the local pre-push gate so a broken branch can't even be pushed:
+`git config core.hooksPath .githooks`.
+
+## Signing & install
+
+`app/debug.keystore` is **committed** (alias `androiddebugkey`, password
+`android`, 10000-day validity). All builds — local and CI — sign with
+this stable cert so APK upgrades don't trip Android's *"App not
+installed as package conflicts with an existing package"*. The keystore
+is **sideload-only**, never for Play Store distribution. Anyone with
+the repo can sign as this cert; that's accepted for a one-person
+internal tool. Don't generalize this pattern.
+
+## CI / release / branch protection
+
+`main` is protected. To merge:
+- A PR is required.
+- Two checks must pass: `verify` (`ci.yml` — detekt + tests + APK
+  build) and `versionName-bumped` (`version-check.yml` — diffs
+  `versionName` in `app/build.gradle.kts` against the PR base; fails
+  if unchanged).
+- Linear history (squash or rebase merge only). No force-pushes, no
+  branch deletion.
+
+On push to `main`, `release.yml` reads the new `versionName`, tags
+`v<version>`, builds a debug APK, attaches it to a GitHub Release as
+`a8s-android-<version>-debug.apk` with auto-generated notes from the
+merged PRs. Skips if the tag already exists (e.g. someone bypassed the
+PR check via direct push).
+
+**Always bump versionName** in `app/build.gradle.kts` when opening a
+PR. Skip past a reserved version if another PR is open (e.g. PR A took
+1.7.0 → PR B picks 1.8.0).
+
+## Workflow / git hygiene
+
+- Branches: short-lived, off `main`. Conventional commit prefixes
+  (`feat:`, `fix:`, `chore:`, `ci:`).
+- **Don't stack PRs against non-main branches.** Squash-merging the
+  parent leaves the child orphaned on a stale branch with the merge
+  button still active. Always `gh pr create --base main`. (Bug history:
+  PR #2 was lost this way; recovered as PR #3.)
+- Squash-merge is the norm here. After merging, sync `main` and delete
+  the local branch. Subsequent PRs rebase onto fresh `main`.
+
+## Known testing patterns
+
+- **Pure-Kotlin first.** Pull decision logic into a top-level function
+  returning a sealed-class result (`decideRoute`, `decideCommand`).
+  Test the function with `JUnit 5`. Don't try to mock Android framework
+  classes — instead, take a snapshot data class as input.
+- **`InfoSnapshot` pattern.** When you need device info in a pure
+  formatter (`Commands.renderInfo`), define a data class with all the
+  fields, gather them in the service layer, pass them in. Tests
+  construct the snapshot directly.
+- **Detekt is opinionated.** `detekt.yml` at repo root tightens
+  `LongMethod` (80), `CyclomaticComplexMethod` (20), `MaxLineLength`
+  (140); disables `NestedBlockDepth` and `LoopWithTooManyJumpStatements`
+  for the Android `BroadcastReceiver` and SDK-permission flow shapes.
+  If a long-line warning fires, prefer breaking the string with
+  concatenation across lines rather than disabling the rule.
+
+## Common pitfalls
+
+- **Don't log secrets.** Detekt won't catch this; the in-app log ring
+  is shown on screen and surfaced via `/logs`.
+- **Don't use `body` on the wire.** It's `content`. Regression test
+  exists: `MqttRouteTest::content field is read instead of body`.
+- **Don't publish with `to: "all"`.** That was the legacy outbound
+  shape; it doesn't resolve on the host unless an alias literally
+  named `all` exists. Use the matched phonebook participant name.
+- **Don't bypass `PublishDedup`.** Google Messages re-posts
+  notifications on thread updates; without dedup the cluster sees N
+  copies of the same SMS reply.
+- **Don't trust the `from` for forwarding without checking the
+  phonebook.** That's what the sender-verification gate is for. Owner
+  is the *only* identity allowed to skip it (and only for
+  slash-commands).
+- **Don't add a fresh debug keystore.** Let the committed
+  `app/debug.keystore` sign every build, or in-place upgrades break.
+
+## Useful adb commands
+
+```bash
+adb logcat -s A8sAndroid:I A8sService:I    # filtered logs
+adb install -r app/build/outputs/apk/debug/app-debug.apk    # in-place upgrade
+adb shell am start -a android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+adb shell am start -a android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS
+```
+
+## Issue / PR style
+
+PR descriptions follow this shape (see merged PRs for examples):
+- One-paragraph **Summary** of *what* and *why*.
+- A bug? Include the failing log line / screenshot.
+- Always a **Version bump** line.
+- A **Test plan** with checkboxes — what was verified locally, what
+  needs hands-on phone testing post-merge.
+
+When you fix something the user just reported, lead the PR title with
+`fix:` and quote the exact symptom they reported in the body. It
+makes the PR self-documenting and easy to grep later.
