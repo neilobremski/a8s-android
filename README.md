@@ -25,14 +25,27 @@ The app is configured via a JSON file with the following schema:
     "Clover": "+15550001111",
     "Gerry": "+15550002222"
   },
-  "remote": {
-    "url": "ssl://your-broker.hivemq.cloud:8883",
-    "topic": "a8s/messaging",
-    "username": "your-user",
-    "password": "your-password"
+  "remotes": {
+    "hivemq": {
+      "transport": "mqtt",
+      "broker": "ssl://your-broker.hivemq.cloud:8883",
+      "topic": "a8s/messaging",
+      "username": "your-user",
+      "password": "your-password"
+    }
+  },
+  "services": {
+    "tempfile": {
+      "service": "tempfile_org",
+      "url": "https://tempfile.org"
+    }
   }
 }
 ```
+
+The legacy `1.9.0` shape (a flat `remote` object instead of `remotes`)
+still parses — it's wrapped as `remotes: { "default": ... }` so an
+in-place upgrade doesn't break.
 
 - **`device`** — the participant name this phone identifies as on the a8s
   cluster. When other agents `tell <device> "..."`, the message arrives at
@@ -48,6 +61,21 @@ The app is configured via a JSON file with the following schema:
   the device runs the command locally and `tell`s the response back. Owner
   authorization is the gate (no phonebook lookup needed for the command
   path) — only this single name can run privileged actions on the phone.
+- **`remotes`** — map of MQTT brokers this device subscribes/publishes to.
+  Each entry is keyed by an arbitrary local name and contains
+  `transport` (default `"mqtt"`), `broker`, `topic`, optional
+  `username`/`password` (also accepts `user`/`pass` aliases). Outbound
+  publishes fan out to every connected remote; inbound funnels through
+  one shared handler regardless of which remote delivered it. The host
+  cluster's a8s router dedups by ULID, so multi-remote delivery is
+  idempotent.
+- **`services`** *(optional)* — map of cross-cluster file-storage
+  backends. Each entry has a `service` kind and a `url`. Currently the
+  only supported kind is `tempfile_org` (https://tempfile.org;
+  pure-stdlib HTTP). Required when an envelope's `files[i].storage`
+  URLs need to be downloaded for inbound or uploaded for outbound.
+  Per-service options: `expiry_hours` (1, 6, 24, 48; default 24) and
+  `timeout_s` (default 30).
 - **`phonebook`** — `name → phone-number` map for the SMS gateway role.
   Outbound: agents `tell <name> "..."` → SMS to that number. Inbound: SMS
   from a known number publishes back to MQTT as that name.
@@ -65,6 +93,7 @@ Responses come back as `tell <owner> "..."` over MQTT.
 | `/update` | Fetch the latest GitHub Release APK and trigger the system install dialog. |
 | `/update --check` | Compare the installed version to the latest release without downloading. |
 | `/update <url>` | Download + install a specific APK URL (bypasses the version comparison). |
+| `/screenshot` | Capture the phone's screen, upload via the first configured storage service, reply with `files: [{storage: [url]}]`. Requires one-time consent via the **Enable Screen Capture** button + a configured storage service. |
 | `/<unknown>` | Replies with the list of known commands. |
 
 Stock Android can't silently install APKs without device-owner setup, so

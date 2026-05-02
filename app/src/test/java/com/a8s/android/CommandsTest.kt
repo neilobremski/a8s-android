@@ -7,13 +7,14 @@ import org.junit.jupiter.api.Test
 class CommandsTest {
 
     private val baseSnapshot = Commands.InfoSnapshot(
-        appVersion = "v1.8.0 (build 9)",
+        appVersion = "v1.10.0 (build 11)",
         deviceModel = "Google Pixel 7",
         androidRelease = "14",
         sdkInt = 34,
-        mqttConnected = true,
-        mqttBroker = "ssl://broker:8883",
-        mqttTopic = "neiltest",
+        remotes = listOf(
+            Commands.RemoteStatus("hivemq", "ssl://broker:8883", "neiltest", connected = true),
+        ),
+        services = listOf("tempfile"),
         networkType = "WIFI",
         batteryPercent = 87,
         batteryCharging = false,
@@ -26,19 +27,42 @@ class CommandsTest {
     @Test
     fun `info contains key fields`() {
         val out = Commands.renderInfo(baseSnapshot)
-        assertTrue(out.contains("a8s-android v1.8.0"))
+        assertTrue(out.contains("a8s-android v1.10.0"))
         assertTrue(out.contains("Google Pixel 7"))
         assertTrue(out.contains("API 34"))
-        assertTrue(out.contains("connected"))
+        assertTrue(out.contains("Remotes: 1/1 connected"))
+        assertTrue(out.contains("hivemq → ssl://broker:8883 / neiltest"))
+        assertTrue(out.contains("Storage: tempfile"))
         assertTrue(out.contains("WIFI"))
         assertTrue(out.contains("87%"))
         assertTrue(out.contains("phonebook=1"))
     }
 
     @Test
-    fun `info marks disconnected MQTT`() {
-        val out = Commands.renderInfo(baseSnapshot.copy(mqttConnected = false))
-        assertTrue(out.contains("DISCONNECTED"))
+    fun `info shows partial connection`() {
+        val out = Commands.renderInfo(
+            baseSnapshot.copy(
+                remotes = listOf(
+                    Commands.RemoteStatus("a", "ssl://a:8883", "t", connected = true),
+                    Commands.RemoteStatus("b", "ssl://b:8883", "t", connected = false),
+                ),
+            ),
+        )
+        assertTrue(out.contains("Remotes: 1/2 connected"))
+        assertTrue(out.contains("✓ a"))
+        assertTrue(out.contains("✗ b"))
+    }
+
+    @Test
+    fun `info reports zero remotes configured`() {
+        val out = Commands.renderInfo(baseSnapshot.copy(remotes = emptyList()))
+        assertTrue(out.contains("Remotes: (none configured)"))
+    }
+
+    @Test
+    fun `info reports no storage when empty`() {
+        val out = Commands.renderInfo(baseSnapshot.copy(services = emptyList()))
+        assertTrue(out.contains("Storage: (none)"))
     }
 
     @Test
@@ -113,5 +137,6 @@ class CommandsTest {
         assertTrue(out.contains("/info"))
         assertTrue(out.contains("/logs"))
         assertTrue(out.contains("/update"))
+        assertTrue(out.contains("/screenshot"))
     }
 }

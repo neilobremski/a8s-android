@@ -1,9 +1,11 @@
 package com.a8s.android
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -47,6 +49,18 @@ class MainActivity : AppCompatActivity() {
         updateUI()
     }
 
+    private val projectionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            A8sService.instance?.setProjectionConsent(result.resultCode, result.data!!)
+            A8sAndroid.log("Screen capture: consent granted")
+        } else {
+            A8sAndroid.log("Screen capture: consent denied or cancelled")
+        }
+        updateUI()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -76,6 +90,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
         root.addView(notifAccessBtn)
+
+        val captureBtn = Button(this).apply {
+            text = "Enable Screen Capture (for /screenshot)"
+            setOnClickListener {
+                val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                projectionLauncher.launch(mgr.createScreenCaptureIntent())
+            }
+        }
+        root.addView(captureBtn)
 
         configDetail = TextView(this).apply {
             textSize = 14f
@@ -184,8 +207,18 @@ class MainActivity : AppCompatActivity() {
         } else {
             statusText.text = "a8s Android ${installedVersion()}\nStatus: Configured as " + config.device
             val sb = StringBuilder()
-            sb.append("Remote URL: ").append(config.remote.url).append("\n")
-            sb.append("Topic: ").append(config.remote.topic).append("\n")
+            if (config.remotes.isEmpty()) {
+                sb.append("Remotes: (none configured)\n")
+            } else {
+                sb.append("Remotes (").append(config.remotes.size).append("):\n")
+                for ((name, rc) in config.remotes) {
+                    sb.append("  ").append(name).append(" → ").append(rc.broker)
+                        .append(" / ").append(rc.topic).append("\n")
+                }
+            }
+            sb.append("Storage: ")
+                .append(if (config.services.isEmpty()) "(none)" else config.services.joinToString(", ") { it.id })
+                .append("\n")
             sb.append("Phonebook: (").append(config.phonebook.size).append(" entries)\n")
             if (missing.isEmpty()) {
                 sb.append("Permissions: all granted\n")

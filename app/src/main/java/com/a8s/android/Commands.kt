@@ -11,14 +11,20 @@ package com.a8s.android
  */
 object Commands {
 
+    data class RemoteStatus(
+        val name: String,
+        val broker: String,
+        val topic: String,
+        val connected: Boolean,
+    )
+
     data class InfoSnapshot(
         val appVersion: String,
         val deviceModel: String,
         val androidRelease: String,
         val sdkInt: Int,
-        val mqttConnected: Boolean,
-        val mqttBroker: String,
-        val mqttTopic: String,
+        val remotes: List<RemoteStatus>,
+        val services: List<String>,
         val networkType: String,
         val batteryPercent: Int?,
         val batteryCharging: Boolean,
@@ -31,7 +37,17 @@ object Commands {
     fun renderInfo(s: InfoSnapshot): String = buildString {
         appendLine("a8s-android ${s.appVersion}")
         appendLine("Device: ${s.deviceModel} (Android ${s.androidRelease}, API ${s.sdkInt})")
-        appendLine("MQTT: ${if (s.mqttConnected) "connected" else "DISCONNECTED"} → ${s.mqttBroker} / ${s.mqttTopic}")
+        if (s.remotes.isEmpty()) {
+            appendLine("Remotes: (none configured)")
+        } else {
+            val connected = s.remotes.count { it.connected }
+            appendLine("Remotes: $connected/${s.remotes.size} connected")
+            for (r in s.remotes) {
+                val state = if (r.connected) "✓" else "✗"
+                appendLine("  $state ${r.name} → ${r.broker} / ${r.topic}")
+            }
+        }
+        appendLine("Storage: ${if (s.services.isEmpty()) "(none)" else s.services.joinToString(", ")}")
         appendLine("Network: ${s.networkType}")
         val batt = s.batteryPercent?.let { "$it%" } ?: "?"
         val chg = if (s.batteryCharging) " (charging)" else ""
@@ -58,7 +74,8 @@ object Commands {
     }
 
     fun renderUnknown(name: String): String =
-        "unknown command: /$name\nknown: /info, /logs [N], /update [--check|<url>]"
+        "unknown command: /$name\n" +
+            "known: /info, /logs [N], /update [--check|<url>], /screenshot"
 
     private fun formatDuration(ms: Long): String {
         if (ms < 0) return "unknown"

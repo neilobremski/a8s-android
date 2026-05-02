@@ -47,6 +47,13 @@
          confirmation dialog the user taps. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- /screenshot — MediaProjection requires a foreground service of
+         type mediaProjection (declared above) plus this permission since
+         API 34. The user must grant projection access via the system
+         dialog the first time; we cache the token for the service's
+         lifetime. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <application
         android:name=".A8sAndroid"
         android:allowBackup="true"
@@ -69,7 +76,7 @@
             android:name=".A8sService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|mediaProjection" />
 
         <receiver
             android:name=".BootReceiver"
