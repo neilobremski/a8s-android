@@ -10,10 +10,12 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureFailure
 import android.hardware.camera2.CaptureRequest
 import android.media.ImageReader
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Size
 import android.view.Surface
+import android.view.WindowManager
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
@@ -53,8 +55,9 @@ object CmdPhoto {
         dest.parentFile?.mkdirs()
         val thread = HandlerThread("a8s-photo").apply { start() }
         val handler = Handler(thread.looper)
+        val displayRotation = currentDisplayRotation(context)
         try {
-            val ok = capture(mgr, cameraId, handler, dest)
+            val ok = capture(mgr, cameraId, handler, dest, displayRotation)
             if (!ok || dest.length() == 0L) {
                 service.replyToOwner(config, cmd.owner, "Photo failed: no image captured")
                 return
@@ -93,6 +96,7 @@ object CmdPhoto {
         cameraId: String,
         handler: Handler,
         dest: File,
+        displayRotation: Int,
     ): Boolean {
         val chars = mgr.getCameraCharacteristics(cameraId)
         val configs = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
@@ -163,6 +167,12 @@ object CmdPhoto {
                                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE,
                                 )
                                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                                // Write EXIF rotation so viewers display the photo
+                                // upright. Phone cameras' sensors are mounted in
+                                // landscape (typically 90° offset on portrait
+                                // phones); the JPEG byte order is sensor-native, so
+                                // we tag the orientation rather than re-encoding.
+                                set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(chars, displayRotation))
                             }.build()
                             session.capture(req, object : CameraCaptureSession.CaptureCallback() {
                                 override fun onCaptureFailed(
@@ -207,6 +217,46 @@ object CmdPhoto {
             capped.maxByOrNull { it.width.toLong() * it.height.toLong() }!!
         } else {
             available.minByOrNull { it.width.toLong() * it.height.toLong() }!!
+        }
+    }
+
+    /** Current display rotation in degrees (0/90/180/270). Falls back
+     *  to 0 if WindowManager is unavailable (it always is on a phone). */
+    private fun currentDisplayRotation(context: Context): Int {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return 0
+        @Suppress("DEPRECATION")
+        val r = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.display?.rotation ?: Surface.ROTATION_0
+        } else {
+            wm.defaultDisplay.rotation
+        }
+        return surfaceRotationToDegrees(r)
+    }
+
+    private fun surfaceRotationToDegrees(rotation: Int): Int = when (rotation) {
+        Surface.ROTATION_0 -> 0
+        Surface.ROTATION_90 -> 90
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 0
+    }
+
+    /** Compute the JPEG orientation tag that makes the photo display
+     *  upright. Sensor orientation is the camera-mount offset (90° on
+     *  most portrait phones for the back camera, 270° for the front).
+     *  Display rotation is the current device rotation. The formula
+     *  differs by lens facing because the front sensor is mirrored. */
+    private fun jpegOrientation(
+        chars: android.hardware.camera2.CameraCharacteristics,
+        displayRotation: Int,
+    ): Int {
+        val sensor = chars.get(android.hardware.camera2.CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val front = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) ==
+            android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT
+        return if (front) {
+            (sensor + displayRotation) % 360
+        } else {
+            (sensor - displayRotation + 360) % 360
         }
     }
 }
