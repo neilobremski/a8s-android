@@ -213,7 +213,10 @@ class CmdHelpersTest {
     @Test
     fun `known commands list covers every new verb`() {
         val joined = CmdHelpers.KNOWN_COMMANDS.joinToString(" ")
-        for (verb in listOf("/photo", "/video", "/location", "/say", "/notify", "/ls", "/cat", "/rm")) {
+        for (verb in listOf(
+            "/photo", "/video", "/location", "/say", "/notify", "/ls", "/cat", "/rm",
+            "/tap", "/longtap", "/swipe", "/key", "/input", "/find", "/macro",
+        )) {
             assertTrue(joined.contains(verb), "missing $verb in KNOWN_COMMANDS")
         }
     }

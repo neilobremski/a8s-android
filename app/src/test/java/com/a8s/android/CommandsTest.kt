@@ -146,5 +146,12 @@ class CommandsTest {
         assertTrue(out.contains("/ls"))
         assertTrue(out.contains("/cat"))
         assertTrue(out.contains("/rm"))
+        assertTrue(out.contains("/tap"))
+        assertTrue(out.contains("/longtap"))
+        assertTrue(out.contains("/swipe"))
+        assertTrue(out.contains("/key"))
+        assertTrue(out.contains("/input"))
+        assertTrue(out.contains("/find"))
+        assertTrue(out.contains("/macro"))
     }
 }

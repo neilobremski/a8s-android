@@ -103,7 +103,28 @@ Responses come back as `tell <owner> "..."` over MQTT.
 | `/ls [<path>]` | List directory entries (default `/sdcard/Download`). Plain-text listing with type, size, mtime, name. |
 | `/cat <path>` | Read a file. Text files <= 10 KB are returned inline; everything else is sent as an attachment via the configured storage service. |
 | `/rm <path>` | Delete a file or empty directory (refuses to recurse into non-empty dirs). |
+| `/tap x y` | Synthesize a tap at screen-pixel coordinates via the accessibility service. Reply attaches a post-tap screenshot. |
+| `/longtap x y [ms]` | Synthesize a long-press (default 800ms). Reply attaches a post-press screenshot. |
+| `/swipe x1 y1 x2 y2 [ms]` | Synthesize a straight-line swipe (default 300ms). Reply attaches a post-swipe screenshot. |
+| `/key <NAME>` | Perform a global accessibility action: `BACK`, `HOME`, `RECENTS`, `NOTIFICATIONS`, `QUICK_SETTINGS`, `LOCK_SCREEN` (case-insensitive). Reply attaches a screenshot. |
+| `/input <text>` | Type the rest of the line into the currently-focused input field via `ACTION_SET_TEXT`. Reports failure if no field is focused. |
+| `/find <label>` | Walk the active window's accessibility tree, find a node whose `text` or `contentDescription` contains `label` (case-insensitive), and click it. Reply attaches a screenshot. |
+| `/macro step1 \| step2 \| …` | Run a sequence of UI-automation steps with full evidence: a `before` screenshot, a screen recording of the run, an `after` screenshot, and a per-step status summary. Step verbs: `tap x y`, `longtap x y [ms]`, `swipe x1 y1 x2 y2 [ms]`, `key NAME`, `input <text>`, `find <label>`, `delay ms`. Pipes inside `input` text are not escapable — use `delay`-bracketed segments to keep the text on its own. |
 | `/<unknown>` | Replies with the list of known commands. |
+
+UI-automation commands (`/tap`, `/longtap`, `/swipe`, `/key`, `/input`,
+`/find`, `/macro`) require the **a8s Automation** accessibility service
+to be enabled in Settings. Accessibility access is a special permission
+that can't be granted via the runtime dialog — you must toggle it in
+**Settings → Accessibility → Installed services → a8s Automation**.
+The **Enable Accessibility Service** button in the app jumps directly
+to that page; the **Grant All Permissions** flow also opens it if our
+service isn't enabled yet. Once enabled, Android shows the periodic
+"a8s Automation has full access to your device" toast — that's the
+contract for accessibility services with full window content + gesture
+dispatch and there's no way to suppress it. The `/macro` command also
+needs Screen Capture consent (same one used by `/screenshot`) for the
+recording + before/after screenshots.
 
 Stock Android can't silently install APKs without device-owner setup, so
 `/update` shows the system's install confirmation on the phone screen
