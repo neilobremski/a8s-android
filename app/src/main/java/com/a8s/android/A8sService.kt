@@ -258,12 +258,20 @@ class A8sService : LifecycleService() {
         val config = A8sAndroid.config ?: return
         when (val route = decideRoute(payload, config)) {
             is MqttRoute.Forward -> {
-                A8sAndroid.log("MQTT -> SMS forward to ${route.number}: ${preview(route.smsBody)}")
-                sendSms(route.number, route.smsBody)
+                if (route.files.any { it.storageUrls.isNotEmpty() }) {
+                    Thread { forwardWithFiles(config, route) }.start()
+                } else {
+                    A8sAndroid.log("MQTT -> SMS forward to ${route.number}: ${preview(route.smsBody)}")
+                    sendSms(route.number, route.smsBody)
+                }
             }
             is MqttRoute.Phonebook -> {
-                A8sAndroid.log("MQTT -> SMS to ${route.name} (${route.number}): ${preview(route.smsBody)}")
-                sendSms(route.number, route.smsBody)
+                if (route.files.any { it.storageUrls.isNotEmpty() }) {
+                    Thread { phonebookWithFiles(config, route) }.start()
+                } else {
+                    A8sAndroid.log("MQTT -> SMS to ${route.name} (${route.number}): ${preview(route.smsBody)}")
+                    sendSms(route.number, route.smsBody)
+                }
             }
             is MqttRoute.Command -> {
                 A8sAndroid.log("/${route.name} from sender=${route.sender}")
@@ -276,6 +284,30 @@ class A8sService : LifecycleService() {
                 A8sAndroid.log("MQTT Handle Error: ${route.reason}")
             }
         }
+    }
+
+    private fun forwardWithFiles(config: A8sAndroid.Config, route: MqttRoute.Forward) {
+        val destDir = File(cacheDir, "downloads")
+        val results = FileDownloader.downloadFiles(route.files, config.services, destDir)
+        val downloaded = results.mapNotNull { it.file }
+        val body = FileDownloader.buildSmsBody(route.smsBody, results)
+        A8sAndroid.log(
+            "MQTT -> SMS forward to ${route.number}: ${preview(body)} " +
+                "(${downloaded.size}/${route.files.size} files downloaded)",
+        )
+        sendSms(route.number, body)
+    }
+
+    private fun phonebookWithFiles(config: A8sAndroid.Config, route: MqttRoute.Phonebook) {
+        val destDir = File(cacheDir, "downloads")
+        val results = FileDownloader.downloadFiles(route.files, config.services, destDir)
+        val downloaded = results.mapNotNull { it.file }
+        val body = FileDownloader.buildSmsBody(route.smsBody, results)
+        A8sAndroid.log(
+            "MQTT -> SMS to ${route.name} (${route.number}): ${preview(body)} " +
+                "(${downloaded.size}/${route.files.size} files downloaded)",
+        )
+        sendSms(route.number, body)
     }
 
     private fun preview(s: String, max: Int = 200): String {
