@@ -18,7 +18,10 @@ class EnvelopeFilesTest {
 
     @Test
     fun `handles multiple files`() {
-        val json = JSONObject("""{"files":[{"filename":"a.jpg","storage":["https://s.org/1/"]},{"filename":"b.pdf","storage":["https://s.org/2/","https://s2.org/3/"]}]}""")
+        val json = JSONObject(
+            """{"files":[{"filename":"a.jpg","storage":["https://s.org/1/"]},""" +
+                """{"filename":"b.pdf","storage":["https://s.org/2/","https://s2.org/3/"]}]}""",
+        )
         val files = parseEnvelopeFiles(json)
         assertEquals(2, files.size)
         assertEquals("b.pdf", files[1].filename)
@@ -47,7 +50,10 @@ class EnvelopeFilesTest {
 
     @Test
     fun `skips entries with blank filename`() {
-        val json = JSONObject("""{"files":[{"filename":"","storage":["https://s.org/1/"]},{"filename":"good.txt","storage":["https://s.org/2/"]}]}""")
+        val json = JSONObject(
+            """{"files":[{"filename":"","storage":["https://s.org/1/"]},""" +
+                """{"filename":"good.txt","storage":["https://s.org/2/"]}]}""",
+        )
         val files = parseEnvelopeFiles(json)
         assertEquals(1, files.size)
         assertEquals("good.txt", files[0].filename)

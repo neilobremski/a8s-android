@@ -155,7 +155,9 @@ class MqttRouteTest {
 
     @Test
     fun `forward includes files with storage URLs`() {
-        val payload = """{"to":"my-phone","from":"Clover","content":"look","files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}"""
+        val payload =
+            """{"to":"my-phone","from":"Clover","content":"look",""" +
+                """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Forward)
         val fwd = r as MqttRoute.Forward
@@ -166,7 +168,9 @@ class MqttRouteTest {
 
     @Test
     fun `phonebook route includes files`() {
-        val payload = """{"to":"Clover","from":"gerry","content":"here","files":[{"filename":"doc.pdf","storage":["https://tempfile.org/x/"]}]}"""
+        val payload =
+            """{"to":"Clover","from":"gerry","content":"here",""" +
+                """"files":[{"filename":"doc.pdf","storage":["https://tempfile.org/x/"]}]}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Phonebook)
         assertEquals(1, (r as MqttRoute.Phonebook).files.size)
@@ -193,7 +197,9 @@ class MqttRouteTest {
 
     @Test
     fun `multiple storage URLs are preserved`() {
-        val payload = """{"to":"my-phone","from":"Clover","content":"x","files":[{"filename":"a.png","storage":["https://s1.org/1/","https://s2.org/2/"]}]}"""
+        val payload =
+            """{"to":"my-phone","from":"Clover","content":"x",""" +
+                """"files":[{"filename":"a.png","storage":["https://s1.org/1/","https://s2.org/2/"]}]}"""
         val r = decideRoute(payload, config())
         val fwd = r as MqttRoute.Forward
         assertEquals(2, fwd.files[0].storageUrls.size)

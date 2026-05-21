@@ -5,8 +5,17 @@ import org.json.JSONObject
 data class EnvelopeFile(val filename: String, val storageUrls: List<String>)
 
 sealed class MqttRoute {
-    data class Forward(val number: String, val smsBody: String, val files: List<EnvelopeFile> = emptyList()) : MqttRoute()
-    data class Phonebook(val name: String, val number: String, val smsBody: String, val files: List<EnvelopeFile> = emptyList()) : MqttRoute()
+    data class Forward(
+        val number: String,
+        val smsBody: String,
+        val files: List<EnvelopeFile> = emptyList(),
+    ) : MqttRoute()
+    data class Phonebook(
+        val name: String,
+        val number: String,
+        val smsBody: String,
+        val files: List<EnvelopeFile> = emptyList(),
+    ) : MqttRoute()
     /**
      * A phonebook-known sender has issued a `/command` to the device. `name`
      * is the bare verb (e.g. "info"), `args` is whatever followed split on
