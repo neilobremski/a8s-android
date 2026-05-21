@@ -3,4 +3,5 @@
     <!-- The /update command writes the downloaded APK to cacheDir/updates
          and exposes it to the system installer via FileProvider. -->
     <cache-path name="updates" path="updates/" />
+    <cache-path name="downloads" path="downloads/" />
 </paths>

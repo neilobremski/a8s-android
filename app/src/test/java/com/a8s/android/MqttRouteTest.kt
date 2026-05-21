@@ -150,4 +150,58 @@ class MqttRouteTest {
         assertTrue(r is MqttRoute.Drop)
         assertTrue((r as MqttRoute.Drop).reason.contains("empty command"))
     }
+
+    // ---------- files parsing ----------
+
+    @Test
+    fun `forward includes files with storage URLs`() {
+        val payload =
+            """{"to":"my-phone","from":"Clover","content":"look",""" +
+                """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}"""
+        val r = decideRoute(payload, config())
+        assertTrue(r is MqttRoute.Forward)
+        val fwd = r as MqttRoute.Forward
+        assertEquals(1, fwd.files.size)
+        assertEquals("photo.jpg", fwd.files[0].filename)
+        assertEquals(listOf("https://tempfile.org/abc/"), fwd.files[0].storageUrls)
+    }
+
+    @Test
+    fun `phonebook route includes files`() {
+        val payload =
+            """{"to":"Clover","from":"gerry","content":"here",""" +
+                """"files":[{"filename":"doc.pdf","storage":["https://tempfile.org/x/"]}]}"""
+        val r = decideRoute(payload, config())
+        assertTrue(r is MqttRoute.Phonebook)
+        assertEquals(1, (r as MqttRoute.Phonebook).files.size)
+    }
+
+    @Test
+    fun `files without storage array have empty URLs`() {
+        val payload = """{"to":"my-phone","from":"Clover","content":"hi","files":[{"filename":"local.txt","path":"./.files/local.txt"}]}"""
+        val r = decideRoute(payload, config())
+        assertTrue(r is MqttRoute.Forward)
+        val fwd = r as MqttRoute.Forward
+        assertEquals(1, fwd.files.size)
+        assertEquals("local.txt", fwd.files[0].filename)
+        assertTrue(fwd.files[0].storageUrls.isEmpty())
+    }
+
+    @Test
+    fun `missing files array yields empty list`() {
+        val payload = """{"to":"my-phone","from":"Clover","content":"plain"}"""
+        val r = decideRoute(payload, config())
+        assertTrue(r is MqttRoute.Forward)
+        assertTrue((r as MqttRoute.Forward).files.isEmpty())
+    }
+
+    @Test
+    fun `multiple storage URLs are preserved`() {
+        val payload =
+            """{"to":"my-phone","from":"Clover","content":"x",""" +
+                """"files":[{"filename":"a.png","storage":["https://s1.org/1/","https://s2.org/2/"]}]}"""
+        val r = decideRoute(payload, config())
+        val fwd = r as MqttRoute.Forward
+        assertEquals(2, fwd.files[0].storageUrls.size)
+    }
 }
