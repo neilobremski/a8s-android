@@ -83,6 +83,9 @@ class A8sService : LifecycleService() {
     private lateinit var wifiLock: WifiManager.WifiLock
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val publishDedup = PublishDedup()
+    private val retryQueue = PublishRetryQueue(
+        scheduler = { delayMs, runnable -> handler.postDelayed(runnable, delayMs) },
+    )
     private var serviceStartMs: Long = 0L
 
     // Cached MediaProjection consent. Set by MainActivity after the user
@@ -116,6 +119,9 @@ class A8sService : LifecycleService() {
 
         registerNetworkCallback()
         registerSentResultReceiver()
+        retryQueue.publishFn = { topic, payload ->
+            tryPublishToAnyConnected(topic, payload)
+        }
         connectAll()
     }
 
@@ -151,6 +157,7 @@ class A8sService : LifecycleService() {
     override fun onDestroy() {
         A8sAndroid.log("Service stopping")
         instance = null
+        retryQueue.clear()
         sentResultReceiver?.let {
             try { unregisterReceiver(it) } catch (_: Exception) { }
         }
@@ -233,6 +240,9 @@ class A8sService : LifecycleService() {
                         A8sAndroid.log("MQTT[$name] Subscribe failed: ${e.message}")
                     }
                     updateNotification(connectionStatusSummary())
+                    retryQueue.flushOnReconnect(name) { topic, payload ->
+                        tryPublish(client, topic, payload)
+                    }
                 }
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
                     A8sAndroid.log("MQTT[$name] Connect Failed: " + exception?.message)
@@ -545,27 +555,43 @@ class A8sService : LifecycleService() {
         return arr
     }
 
-    /**
-     * Fan-out publish: try every configured remote, swallow per-remote
-     * failures (we already log them) and return success/failure counts.
-     * The host-side a8s router dedups by ULID, so multiple remotes
-     * receiving the same envelope is idempotent.
-     */
+    private fun tryPublish(client: MqttAsyncClient, topic: String, payload: ByteArray): Boolean {
+        return try {
+            client.publish(topic, MqttMessage(payload))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun tryPublishToAnyConnected(topic: String, payload: ByteArray): Boolean {
+        val config = A8sAndroid.config ?: return false
+        for ((name, rc) in config.remotes) {
+            if (rc.topic != topic) continue
+            val client = mqttClients[name] ?: continue
+            if (!client.isConnected) continue
+            if (tryPublish(client, rc.topic, payload)) return true
+        }
+        return false
+    }
+
     private fun publishToAllRemotes(config: A8sAndroid.Config, payload: String): Pair<Int, Int> {
         var ok = 0
         var fail = 0
+        val bytes = payload.toByteArray()
         config.remotes.forEach { (name, rc) ->
             val client = mqttClients[name]
             if (client == null || !client.isConnected) {
-                A8sAndroid.log("MQTT[$name] publish skipped: not connected")
+                A8sAndroid.log("MQTT[$name] publish queued: not connected")
+                retryQueue.enqueue(name, rc.topic, bytes)
                 fail++
                 return@forEach
             }
-            try {
-                client.publish(rc.topic, MqttMessage(payload.toByteArray()))
+            if (tryPublish(client, rc.topic, bytes)) {
                 ok++
-            } catch (e: Exception) {
-                A8sAndroid.log("MQTT[$name] publish failed: ${e.message}")
+            } else {
+                A8sAndroid.log("MQTT[$name] publish failed, queuing for retry")
+                retryQueue.enqueue(name, rc.topic, bytes)
                 fail++
             }
         }
