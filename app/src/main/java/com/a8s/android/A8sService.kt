@@ -67,6 +67,15 @@ class A8sService : LifecycleService() {
             "input" to { s, c, k -> CmdInput.run(s, c, k) },
             "find" to { s, c, k -> CmdFind.run(s, c, k) },
             "macro" to { s, c, k -> CmdMacro.run(s, c, k) },
+            "send" to { s, c, k ->
+                val parts = CmdHelpers.parseSendArgs(k.args)
+                if (parts == null) {
+                    s.replyToSender(c, k.sender, "usage: /send <number> <message>")
+                } else {
+                    s.sendSms(parts.number, parts.body)
+                    s.replyToSender(c, k.sender, "SMS queued to ${parts.number}: ${s.preview(parts.body)}")
+                }
+            },
         )
     }
 
@@ -269,7 +278,7 @@ class A8sService : LifecycleService() {
         when (val route = decideRoute(payload, config)) {
             is MqttRoute.NotACommand -> {
                 val reply = "error: message must start with a /command\n" +
-                    "available: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
+                    "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
                 publishToSender(config, route.sender, reply)
             }
             is MqttRoute.Command -> {
@@ -286,7 +295,7 @@ class A8sService : LifecycleService() {
     }
 
 
-    private fun preview(s: String, max: Int = 200): String {
+    internal fun preview(s: String, max: Int = 200): String {
         val flat = s.replace("\n", " ").trim()
         return if (flat.length <= max) flat else "${flat.take(max)}…"
     }
@@ -309,15 +318,6 @@ class A8sService : LifecycleService() {
                 Commands.renderInfo(InfoSnapshotter.capture(this, config, verbose), verbose)
             }
             "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
-            "send" -> {
-                val parts = CmdHelpers.parseSendArgs(cmd.args)
-                if (parts == null) {
-                    "usage: /send <number> <message>"
-                } else {
-                    sendSms(parts.number, parts.body)
-                    "SMS queued to ${parts.number}: ${preview(parts.body)}"
-                }
-            }
             else -> Commands.renderUnknown(cmd.name)
         }
         publishToSender(config, cmd.sender, reply)
@@ -605,7 +605,7 @@ class A8sService : LifecycleService() {
         return Pair(ok, fail)
     }
 
-    private fun sendSms(to: String, body: String) {
+    internal fun sendSms(to: String, body: String) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
             != PackageManager.PERMISSION_GRANTED) {
             A8sAndroid.log("SMS Send blocked: SEND_SMS not granted — open the app and grant permissions")
