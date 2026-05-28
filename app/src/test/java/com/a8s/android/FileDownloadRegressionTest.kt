@@ -74,7 +74,7 @@ class FileDownloadRegressionTest {
     }
 
     @Test
-    fun `with file parsing storage URLs are preserved on Phonebook route`() {
+    fun `message to non-device with files is dropped`() {
         val payload = JSONObject().apply {
             put("to", "Clover")
             put("from", "gerry")
@@ -90,10 +90,7 @@ class FileDownloadRegressionTest {
         }.toString()
 
         val route = decideRoute(payload, config())
-        assertTrue(route is MqttRoute.Phonebook)
-        val pb = route as MqttRoute.Phonebook
-        assertEquals(1, pb.files.size)
-        assertEquals("report.pdf", pb.files[0].filename)
+        assertTrue(route is MqttRoute.Drop)
     }
 
     private class FakeStorageService(
