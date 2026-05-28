@@ -55,18 +55,11 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `to in phonebook produces Phonebook route`() {
-        val payload = """{"to":"Clover","from":"gerry","content":"yo"}"""
-        val r = decideRoute(payload, config())
-        assertEquals(MqttRoute.Phonebook("Clover", "+15550001111", "yo"), r)
-    }
-
-    @Test
-    fun `to not in phonebook and not device drops`() {
-        val payload = """{"to":"unknown","from":"gerry","content":"x"}"""
+    fun `to not device drops`() {
+        val payload = """{"to":"other-agent","from":"Clover","content":"yo"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
-        assertTrue((r as MqttRoute.Drop).reason.contains("not in phonebook"))
+        assertTrue((r as MqttRoute.Drop).reason.contains("not this device"))
     }
 
     @Test
@@ -84,19 +77,18 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `device wins over phonebook entry of the same name`() {
-        val cfg = config(phonebook = mapOf("my-phone" to "+1999", "Clover" to "+15550001111"))
+    fun `to == device with multiple phonebook entries forwards correctly`() {
+        val cfg = config(phonebook = mapOf("Neil" to "+1999", "Clover" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Clover","content":"hi"}"""
         val r = decideRoute(payload, cfg)
-        assertTrue(r is MqttRoute.Forward)
         assertEquals(MqttRoute.Forward("+15550001111", "hi"), r)
     }
 
     @Test
-    fun `content field is read instead of body`() {
+    fun `to non-device drops even if content has body field`() {
         val payload = """{"to":"Clover","from":"gerry","content":"present","body":"WRONG"}"""
         val r = decideRoute(payload, config())
-        assertEquals(MqttRoute.Phonebook("Clover", "+15550001111", "present"), r)
+        assertTrue(r is MqttRoute.Drop)
     }
 
     // ---------- /command routing (phonebook is the auth gate) ----------
@@ -167,13 +159,12 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `phonebook route includes files`() {
+    fun `message to non-device with files still drops`() {
         val payload =
             """{"to":"Clover","from":"gerry","content":"here",""" +
                 """"files":[{"filename":"doc.pdf","storage":["https://tempfile.org/x/"]}]}"""
         val r = decideRoute(payload, config())
-        assertTrue(r is MqttRoute.Phonebook)
-        assertEquals(1, (r as MqttRoute.Phonebook).files.size)
+        assertTrue(r is MqttRoute.Drop)
     }
 
     @Test

@@ -275,14 +275,6 @@ class A8sService : LifecycleService() {
                     sendSms(route.number, route.smsBody)
                 }
             }
-            is MqttRoute.Phonebook -> {
-                if (route.files.any { it.storageUrls.isNotEmpty() }) {
-                    Thread { phonebookWithFiles(config, route) }.start()
-                } else {
-                    A8sAndroid.log("MQTT -> SMS to ${route.name} (${route.number}): ${preview(route.smsBody)}")
-                    sendSms(route.number, route.smsBody)
-                }
-            }
             is MqttRoute.Command -> {
                 A8sAndroid.log("/${route.name} from sender=${route.sender}")
                 executeCommand(route)
@@ -308,17 +300,6 @@ class A8sService : LifecycleService() {
         sendSms(route.number, body)
     }
 
-    private fun phonebookWithFiles(config: A8sAndroid.Config, route: MqttRoute.Phonebook) {
-        val destDir = File(cacheDir, "downloads")
-        val results = FileDownloader.downloadFiles(route.files, config.services, destDir)
-        val downloaded = results.mapNotNull { it.file }
-        val body = FileDownloader.buildSmsBody(route.smsBody, results)
-        A8sAndroid.log(
-            "MQTT -> SMS to ${route.name} (${route.number}): ${preview(body)} " +
-                "(${downloaded.size}/${route.files.size} files downloaded)",
-        )
-        sendSms(route.number, body)
-    }
 
     private fun preview(s: String, max: Int = 200): String {
         val flat = s.replace("\n", " ").trim()
