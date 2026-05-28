@@ -13,6 +13,17 @@ package com.a8s.android
  */
 object CmdHelpers {
 
+    // ── /send ────────────────────────────────────────────────────────────
+
+    data class SendParts(val number: String, val body: String)
+
+    fun parseSendArgs(args: List<String>): SendParts? {
+        if (args.size < 2) return null
+        val number = args[0]
+        val body = args.drop(1).joinToString(" ")
+        return SendParts(number, body)
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     enum class CameraFacing { FRONT, BACK }
@@ -199,6 +210,7 @@ object CmdHelpers {
     val KNOWN_COMMANDS: List<String> = listOf(
         "/info",
         "/logs [N]",
+        "/send <number> <message>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",

@@ -32,10 +32,7 @@ class FileDownloadRegressionTest {
     )
 
     @Test
-    fun `without file parsing storage URLs are lost in envelope`() {
-        // Before the fix: the envelope JSON had a "files" array but
-        // decideRoute ignored it entirely — the file attachment was
-        // invisible and never reached the SMS recipient.
+    fun `non-command content returns NotACommand`() {
         val payload = JSONObject().apply {
             put("to", "my-phone")
             put("from", "Clover")
@@ -43,18 +40,13 @@ class FileDownloadRegressionTest {
         }.toString()
 
         val route = decideRoute(payload, config())
-        assertTrue(route is MqttRoute.Forward)
-        val fwd = route as MqttRoute.Forward
-        // Without files field, the attachment metadata is completely lost.
-        assertTrue(fwd.files.isEmpty())
+        assertTrue(route is MqttRoute.NotACommand)
+        assertEquals("Clover", (route as MqttRoute.NotACommand).sender)
     }
 
     @Test
-    fun `with file parsing storage URLs are preserved on Forward route`() {
-        val payload = JSONObject().apply {
-            put("to", "my-phone")
-            put("from", "Clover")
-            put("content", "see attached")
+    fun `parseEnvelopeFiles preserves storage URLs from envelope JSON`() {
+        val json = JSONObject().apply {
             put("files", org.json.JSONArray().apply {
                 put(JSONObject().apply {
                     put("filename", "photo.jpg")
@@ -63,14 +55,12 @@ class FileDownloadRegressionTest {
                     })
                 })
             })
-        }.toString()
+        }
 
-        val route = decideRoute(payload, config())
-        assertTrue(route is MqttRoute.Forward)
-        val fwd = route as MqttRoute.Forward
-        assertEquals(1, fwd.files.size)
-        assertEquals("photo.jpg", fwd.files[0].filename)
-        assertEquals("https://tempfile.org/abc123/", fwd.files[0].storageUrls[0])
+        val files = parseEnvelopeFiles(json)
+        assertEquals(1, files.size)
+        assertEquals("photo.jpg", files[0].filename)
+        assertEquals("https://tempfile.org/abc123/", files[0].storageUrls[0])
     }
 
     @Test

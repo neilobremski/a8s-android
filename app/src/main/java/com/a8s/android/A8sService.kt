@@ -267,13 +267,10 @@ class A8sService : LifecycleService() {
     private fun handleMqttMessage(payload: String) {
         val config = A8sAndroid.config ?: return
         when (val route = decideRoute(payload, config)) {
-            is MqttRoute.Forward -> {
-                if (route.files.any { it.storageUrls.isNotEmpty() }) {
-                    Thread { forwardWithFiles(config, route) }.start()
-                } else {
-                    A8sAndroid.log("MQTT -> SMS forward to ${route.number}: ${preview(route.smsBody)}")
-                    sendSms(route.number, route.smsBody)
-                }
+            is MqttRoute.NotACommand -> {
+                val reply = "error: message must start with a /command\n" +
+                    "available: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
+                publishToSender(config, route.sender, reply)
             }
             is MqttRoute.Command -> {
                 A8sAndroid.log("/${route.name} from sender=${route.sender}")
@@ -286,18 +283,6 @@ class A8sService : LifecycleService() {
                 A8sAndroid.log("MQTT Handle Error: ${route.reason}")
             }
         }
-    }
-
-    private fun forwardWithFiles(config: A8sAndroid.Config, route: MqttRoute.Forward) {
-        val destDir = File(cacheDir, "downloads")
-        val results = FileDownloader.downloadFiles(route.files, config.services, destDir)
-        val downloaded = results.mapNotNull { it.file }
-        val body = FileDownloader.buildSmsBody(route.smsBody, results)
-        A8sAndroid.log(
-            "MQTT -> SMS forward to ${route.number}: ${preview(body)} " +
-                "(${downloaded.size}/${route.files.size} files downloaded)",
-        )
-        sendSms(route.number, body)
     }
 
 
@@ -324,6 +309,15 @@ class A8sService : LifecycleService() {
                 Commands.renderInfo(InfoSnapshotter.capture(this, config, verbose), verbose)
             }
             "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
+            "send" -> {
+                val parts = CmdHelpers.parseSendArgs(cmd.args)
+                if (parts == null) {
+                    "usage: /send <number> <message>"
+                } else {
+                    sendSms(parts.number, parts.body)
+                    "SMS queued to ${parts.number}: ${preview(parts.body)}"
+                }
+            }
             else -> Commands.renderUnknown(cmd.name)
         }
         publishToSender(config, cmd.sender, reply)

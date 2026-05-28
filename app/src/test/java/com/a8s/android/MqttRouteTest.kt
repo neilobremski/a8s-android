@@ -1,5 +1,6 @@
 package com.a8s.android
 
+import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -24,10 +25,10 @@ class MqttRouteTest {
     )
 
     @Test
-    fun `to == device with known sender forwards to that sender's number`() {
+    fun `to == device with known sender and no slash returns NotACommand`() {
         val payload = """{"to":"my-phone","from":"Clover","content":"hello"}"""
         val r = decideRoute(payload, config())
-        assertEquals(MqttRoute.Forward("+15550001111", "hello"), r)
+        assertEquals(MqttRoute.NotACommand("Clover"), r)
     }
 
     @Test
@@ -77,11 +78,11 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `to == device with multiple phonebook entries forwards correctly`() {
+    fun `to == device with multiple phonebook entries returns NotACommand`() {
         val cfg = config(phonebook = mapOf("Alice" to "+1999", "Clover" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Clover","content":"hi"}"""
         val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.Forward("+15550001111", "hi"), r)
+        assertEquals(MqttRoute.NotACommand("Clover"), r)
     }
 
     @Test
@@ -119,11 +120,11 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `non-slash content from phonebook sender takes the forward path`() {
+    fun `non-slash content from phonebook sender returns NotACommand`() {
         val cfg = config(phonebook = mapOf("Alice" to "+15550009999"))
         val payload = """{"to":"my-phone","from":"Alice","content":"hello"}"""
         val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.Forward("+15550009999", "hello"), r)
+        assertEquals(MqttRoute.NotACommand("Alice"), r)
     }
 
     @Test
@@ -143,19 +144,17 @@ class MqttRouteTest {
         assertTrue((r as MqttRoute.Drop).reason.contains("empty command"))
     }
 
-    // ---------- files parsing ----------
+    // ---------- files parsing (parseEnvelopeFiles utility) ----------
 
     @Test
-    fun `forward includes files with storage URLs`() {
-        val payload =
-            """{"to":"my-phone","from":"Clover","content":"look",""" +
-                """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}"""
-        val r = decideRoute(payload, config())
-        assertTrue(r is MqttRoute.Forward)
-        val fwd = r as MqttRoute.Forward
-        assertEquals(1, fwd.files.size)
-        assertEquals("photo.jpg", fwd.files[0].filename)
-        assertEquals(listOf("https://tempfile.org/abc/"), fwd.files[0].storageUrls)
+    fun `parseEnvelopeFiles extracts storage URLs`() {
+        val json = org.json.JSONObject(
+            """{"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}""",
+        )
+        val files = parseEnvelopeFiles(json)
+        assertEquals(1, files.size)
+        assertEquals("photo.jpg", files[0].filename)
+        assertEquals(listOf("https://tempfile.org/abc/"), files[0].storageUrls)
     }
 
     @Test
@@ -168,31 +167,29 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `files without storage array have empty URLs`() {
-        val payload = """{"to":"my-phone","from":"Clover","content":"hi","files":[{"filename":"local.txt","path":"./.files/local.txt"}]}"""
-        val r = decideRoute(payload, config())
-        assertTrue(r is MqttRoute.Forward)
-        val fwd = r as MqttRoute.Forward
-        assertEquals(1, fwd.files.size)
-        assertEquals("local.txt", fwd.files[0].filename)
-        assertTrue(fwd.files[0].storageUrls.isEmpty())
+    fun `parseEnvelopeFiles handles missing storage array`() {
+        val json = org.json.JSONObject(
+            """{"files":[{"filename":"local.txt","path":"./.files/local.txt"}]}""",
+        )
+        val files = parseEnvelopeFiles(json)
+        assertEquals(1, files.size)
+        assertEquals("local.txt", files[0].filename)
+        assertTrue(files[0].storageUrls.isEmpty())
     }
 
     @Test
-    fun `missing files array yields empty list`() {
-        val payload = """{"to":"my-phone","from":"Clover","content":"plain"}"""
-        val r = decideRoute(payload, config())
-        assertTrue(r is MqttRoute.Forward)
-        assertTrue((r as MqttRoute.Forward).files.isEmpty())
+    fun `parseEnvelopeFiles returns empty for no files array`() {
+        val json = org.json.JSONObject("""{"content":"plain"}""")
+        val files = parseEnvelopeFiles(json)
+        assertTrue(files.isEmpty())
     }
 
     @Test
-    fun `multiple storage URLs are preserved`() {
-        val payload =
-            """{"to":"my-phone","from":"Clover","content":"x",""" +
-                """"files":[{"filename":"a.png","storage":["https://s1.org/1/","https://s2.org/2/"]}]}"""
-        val r = decideRoute(payload, config())
-        val fwd = r as MqttRoute.Forward
-        assertEquals(2, fwd.files[0].storageUrls.size)
+    fun `parseEnvelopeFiles preserves multiple storage URLs`() {
+        val json = org.json.JSONObject(
+            """{"files":[{"filename":"a.png","storage":["https://s1.org/1/","https://s2.org/2/"]}]}""",
+        )
+        val files = parseEnvelopeFiles(json)
+        assertEquals(2, files[0].storageUrls.size)
     }
 }
