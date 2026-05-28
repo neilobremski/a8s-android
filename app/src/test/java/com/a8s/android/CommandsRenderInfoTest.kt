@@ -39,7 +39,7 @@ class CommandsRenderInfoTest {
             uptimeMs = null, autoTime = null, autoTimezone = null,
         ),
         remotes = listOf(
-            Commands.RemoteStatus("hivemq", "ssl://broker:8883", "neiltest", connected = true),
+            Commands.RemoteStatus("hivemq", "ssl://broker:8883", "test-topic", connected = true),
         ),
         services = listOf("tempfile"),
         phonebookSize = 1,

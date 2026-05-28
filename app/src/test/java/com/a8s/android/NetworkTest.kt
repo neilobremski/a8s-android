@@ -61,7 +61,7 @@ class NetworkTest {
         val json = JSONObject("""
             {"remote": {
               "url": "ssl://legacy:8883",
-              "topic": "neiltest",
+              "topic": "test-topic",
               "username": "u",
               "password": "p"
             }}
@@ -70,7 +70,7 @@ class NetworkTest {
         assertEquals(1, rs.size)
         val r = rs["default"]!!
         assertEquals("ssl://legacy:8883", r.broker)
-        assertEquals("neiltest", r.topic)
+        assertEquals("test-topic", r.topic)
         assertEquals("u", r.username)
     }
 

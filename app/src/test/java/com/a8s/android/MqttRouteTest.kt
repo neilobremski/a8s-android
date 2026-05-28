@@ -78,7 +78,7 @@ class MqttRouteTest {
 
     @Test
     fun `to == device with multiple phonebook entries forwards correctly`() {
-        val cfg = config(phonebook = mapOf("Neil" to "+1999", "Clover" to "+15550001111"))
+        val cfg = config(phonebook = mapOf("Alice" to "+1999", "Clover" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Clover","content":"hi"}"""
         val r = decideRoute(payload, cfg)
         assertEquals(MqttRoute.Forward("+15550001111", "hi"), r)
@@ -95,23 +95,23 @@ class MqttRouteTest {
 
     @Test
     fun `slash command from phonebook sender produces Command route`() {
-        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Neil","content":"/info"}"""
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/info"}"""
         val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.Command("Neil", "info", emptyList()), r)
+        assertEquals(MqttRoute.Command("Alice", "info", emptyList()), r)
     }
 
     @Test
     fun `slash command parses args`() {
-        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Neil","content":"/logs 100"}"""
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/logs 100"}"""
         val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.Command("Neil", "logs", listOf("100")), r)
+        assertEquals(MqttRoute.Command("Alice", "logs", listOf("100")), r)
     }
 
     @Test
     fun `slash command from unknown sender drops`() {
-        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"stranger","content":"/info"}"""
         val r = decideRoute(payload, cfg)
         assertTrue(r is MqttRoute.Drop)
@@ -120,24 +120,24 @@ class MqttRouteTest {
 
     @Test
     fun `non-slash content from phonebook sender takes the forward path`() {
-        val cfg = config(phonebook = mapOf("Neil" to "+15550009999"))
-        val payload = """{"to":"my-phone","from":"Neil","content":"hello"}"""
+        val cfg = config(phonebook = mapOf("Alice" to "+15550009999"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"hello"}"""
         val r = decideRoute(payload, cfg)
         assertEquals(MqttRoute.Forward("+15550009999", "hello"), r)
     }
 
     @Test
     fun `command verb is lowercased`() {
-        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Neil","content":"/INFO"}"""
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/INFO"}"""
         val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.Command("Neil", "info", emptyList()), r)
+        assertEquals(MqttRoute.Command("Alice", "info", emptyList()), r)
     }
 
     @Test
     fun `empty slash command drops`() {
-        val cfg = config(phonebook = mapOf("Neil" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Neil","content":"/   "}"""
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/   "}"""
         val r = decideRoute(payload, cfg)
         assertTrue(r is MqttRoute.Drop)
         assertTrue((r as MqttRoute.Drop).reason.contains("empty command"))
