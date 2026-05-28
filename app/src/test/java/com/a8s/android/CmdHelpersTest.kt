@@ -8,6 +8,30 @@ import org.junit.jupiter.api.Test
 
 class CmdHelpersTest {
 
+    // ── /send ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseSendArgs valid input`() {
+        val result = CmdHelpers.parseSendArgs(listOf("+15551234567", "hey", "there"))
+        assertEquals(CmdHelpers.SendParts("+15551234567", "hey there"), result)
+    }
+
+    @Test
+    fun `parseSendArgs just a number returns null`() {
+        assertNull(CmdHelpers.parseSendArgs(listOf("+15551234567")))
+    }
+
+    @Test
+    fun `parseSendArgs empty returns null`() {
+        assertNull(CmdHelpers.parseSendArgs(emptyList()))
+    }
+
+    @Test
+    fun `parseSendArgs preserves multi-word body`() {
+        val result = CmdHelpers.parseSendArgs(listOf("5550001111", "hello", "world", "how", "are", "you"))
+        assertEquals("hello world how are you", result!!.body)
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     @Test
@@ -214,7 +238,7 @@ class CmdHelpersTest {
     fun `known commands list covers every new verb`() {
         val joined = CmdHelpers.KNOWN_COMMANDS.joinToString(" ")
         for (verb in listOf(
-            "/photo", "/video", "/location", "/say", "/notify", "/ls", "/cat", "/rm",
+            "/send", "/photo", "/video", "/location", "/say", "/notify", "/ls", "/cat", "/rm",
             "/tap", "/longtap", "/swipe", "/key", "/input", "/find", "/macro",
         )) {
             assertTrue(joined.contains(verb), "missing $verb in KNOWN_COMMANDS")

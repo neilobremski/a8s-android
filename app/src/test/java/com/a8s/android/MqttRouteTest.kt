@@ -128,6 +128,16 @@ class MqttRouteTest {
     }
 
     @Test
+    fun `slash content yields Command not NotACommand`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/send +15559990000 hi there"}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Command)
+        assertEquals("send", (r as MqttRoute.Command).name)
+        assertEquals(listOf("+15559990000", "hi", "there"), r.args)
+    }
+
+    @Test
     fun `command verb is lowercased`() {
         val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
         val payload = """{"to":"my-phone","from":"Alice","content":"/INFO"}"""
