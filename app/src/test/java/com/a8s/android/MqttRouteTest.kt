@@ -238,7 +238,9 @@ class MqttRouteTest {
     @Test
     fun `command with files passes them to Command route`() {
         val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/send 5551234 hello","files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}"""
+        val payload =
+            """{"to":"my-phone","from":"Alice","content":"/send 5551234 hello",""" +
+                """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}"""
         val r = decideRoute(payload, cfg)
         assertTrue(r is MqttRoute.Command)
         val cmd = r as MqttRoute.Command
@@ -252,7 +254,10 @@ class MqttRouteTest {
     @Test
     fun `command with multiple files carries all`() {
         val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/send 5551234 check these","files":[{"filename":"a.jpg","storage":["https://tempfile.org/1/"]},{"filename":"b.png","storage":["https://tempfile.org/2/"]}]}"""
+        val payload =
+            """{"to":"my-phone","from":"Alice","content":"/send 5551234 check these",""" +
+                """"files":[{"filename":"a.jpg","storage":["https://tempfile.org/1/"]},""" +
+                """{"filename":"b.png","storage":["https://tempfile.org/2/"]}]}"""
         val r = decideRoute(payload, cfg) as MqttRoute.Command
         assertEquals(2, r.files.size)
     }
@@ -260,7 +265,9 @@ class MqttRouteTest {
     @Test
     fun `NotACommand does not carry files`() {
         val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"hello","files":[{"filename":"x.jpg","storage":["https://tempfile.org/x/"]}]}"""
+        val payload =
+            """{"to":"my-phone","from":"Alice","content":"hello",""" +
+                """"files":[{"filename":"x.jpg","storage":["https://tempfile.org/x/"]}]}"""
         val r = decideRoute(payload, cfg)
         assertTrue(r is MqttRoute.NotACommand)
     }

@@ -11,7 +11,12 @@ sealed class MqttRoute {
      * whitespace. `sender` is the participant name from the envelope's
      * `from` field — force-stamped by the host's a8s router.
      */
-    data class Command(val sender: String, val name: String, val args: List<String>, val files: List<EnvelopeFile> = emptyList()) : MqttRoute()
+    data class Command(
+        val sender: String,
+        val name: String,
+        val args: List<String>,
+        val files: List<EnvelopeFile> = emptyList(),
+    ) : MqttRoute()
     data class NotACommand(val sender: String) : MqttRoute()
     data class Drop(val reason: String) : MqttRoute()
     data class ParseError(val reason: String) : MqttRoute()
