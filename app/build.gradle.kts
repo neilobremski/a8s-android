@@ -11,8 +11,8 @@ android {
         applicationId = "com.a8s.android"
         minSdk = 26
         targetSdk = 34
-        versionCode = 24
-        versionName = "1.19.0"
+        versionCode = 25
+        versionName = "1.20.0"
     }
 
     signingConfigs {
