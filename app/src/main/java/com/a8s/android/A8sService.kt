@@ -39,6 +39,8 @@ class A8sService : LifecycleService() {
         private const val CHANNEL_ID = "a8s_android_channel"
         private const val NOTIF_ID = 1001
         const val SMS_SENT_ACTION = "com.a8s.android.SMS_SENT"
+        private const val UPDATE_CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
+        private const val UPDATE_CHECK_INITIAL_DELAY_MS = 60L * 1000
 
         var instance: A8sService? = null
             private set
@@ -100,6 +102,7 @@ class A8sService : LifecycleService() {
     )
     private var serviceStartMs: Long = 0L
     private var mmsObserver: MmsObserver? = null
+    private val updateCheckRunnable = Runnable { checkForUpdate() }
 
     // Cached MediaProjection consent. Set by MainActivity after the user
     // grants screen capture; held until the service dies. We store the
@@ -137,11 +140,38 @@ class A8sService : LifecycleService() {
         }
         connectAll()
         startMmsObserver()
+        scheduleUpdateCheck()
     }
 
     private fun startMmsObserver() {
         mmsObserver = MmsObserver(this, handler).also { it.register() }
     }
+
+    private fun scheduleUpdateCheck() {
+        handler.postDelayed(updateCheckRunnable, UPDATE_CHECK_INITIAL_DELAY_MS)
+    }
+
+    private fun checkForUpdate() {
+        Thread {
+            try {
+                val installed = installedVersionName()
+                val latest = Updater.fetchLatestRelease()
+                if (Updater.compareVersions(installed, latest.versionName) >= 0) {
+                    A8sAndroid.log("Update check: up to date (v$installed)")
+                } else {
+                    A8sAndroid.log("Update check: v$installed → ${latest.tagName} available, downloading...")
+                    val dest = File(File(cacheDir, "updates"), latest.apkName)
+                    Updater.downloadTo(latest.apkUrl, dest)
+                    A8sAndroid.log("Update check: downloaded ${Updater.humanSize(dest.length())}, triggering install")
+                    triggerInstallPrompt(dest)
+                }
+            } catch (e: Exception) {
+                A8sAndroid.log("Update check: failed (${e.message})")
+            }
+            handler.postDelayed(updateCheckRunnable, UPDATE_CHECK_INTERVAL_MS)
+        }.start()
+    }
+
 
     private fun registerSentResultReceiver() {
         if (sentResultReceiver != null) return
@@ -175,6 +205,7 @@ class A8sService : LifecycleService() {
     override fun onDestroy() {
         A8sAndroid.log("Service stopping")
         instance = null
+        handler.removeCallbacks(updateCheckRunnable)
         mmsObserver?.unregister()
         mmsObserver = null
         retryQueue.clear()
