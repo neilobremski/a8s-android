@@ -340,4 +340,23 @@ class CmdHelpersTest {
         assertEquals("https://example.com/path extra", result!!.url)
     }
 
+    // ── /send handler flow (routing → SMS body) ─────────────────────────
+
+    @Test
+    fun `send handler flow - args parsed then body built with files`() {
+        val args = listOf("5551234", "check", "this", "out")
+        val files = listOf(EnvelopeFile("photo.jpg", listOf("https://tempfile.org/abc/")))
+        val parts = CmdHelpers.parseSendArgs(args)!!
+        val body = CmdHelpers.buildSendBody(parts.body, files)
+        assertEquals("check this out\nhttps://tempfile.org/abc/", body)
+    }
+
+    @Test
+    fun `buildSendBody does not include filename only URLs`() {
+        val files = listOf(EnvelopeFile("secret.doc", listOf("https://tempfile.org/xyz/")))
+        val body = CmdHelpers.buildSendBody("here you go", files)
+        assertFalse(body.contains("secret.doc"))
+        assertTrue(body.contains("https://tempfile.org/xyz/"))
+    }
+
 }
