@@ -21,6 +21,7 @@ object CmdReply {
         val number = cmd.args[0]
         val text = cmd.args.drop(1).joinToString(" ")
         val cached = A8sAndroid.getReplyAction(number)
+            ?: A8sAndroid.getReplyActionByDigits(number)
         if (cached == null) {
             val available = A8sAndroid.listReplySenders()
             val hint = if (available.isEmpty()) "No cached reply actions."
