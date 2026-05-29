@@ -100,6 +100,8 @@ class MainActivity : AppCompatActivity() {
         updateUI()
     }
 
+    private lateinit var setupPanel: LinearLayout
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -108,11 +110,9 @@ class MainActivity : AppCompatActivity() {
             setPadding(32, 32, 32, 32)
         }
         addStatusBlock(root)
-        addConfigBlock(root)
-        addPermissionButtons(root)
-        addDiagnosticsBlock(root)
         addConfigDetail(root)
         addLogBlock(root)
+        addSetupToggle(root)
         setContentView(root)
 
         A8sAndroid.onLogListener = {
@@ -128,8 +128,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun addStatusBlock(root: LinearLayout) {
         statusText = TextView(this).apply {
-            textSize = 18f
-            setPadding(0, 0, 0, 32)
+            textSize = 16f
+            setPadding(0, 0, 0, 8)
         }
         root.addView(statusText)
     }
@@ -294,35 +294,54 @@ class MainActivity : AppCompatActivity() {
 
     private fun addConfigDetail(root: LinearLayout) {
         configDetail = TextView(this).apply {
-            textSize = 14f
-            setPadding(0, 32, 0, 32)
+            textSize = 12f
+            setPadding(0, 8, 0, 8)
         }
         root.addView(configDetail)
     }
 
     private fun addLogBlock(root: LinearLayout) {
-        val logLabel = TextView(this).apply {
-            text = "Console Logs:"
-            textSize = 14f
-            setPadding(0, 32, 0, 8)
-        }
-        root.addView(logLabel)
         logScroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
                 1f,
             )
-            setBackgroundColor(0xFFF5F5F5.toInt())
+            setBackgroundColor(0xFF1A1A1A.toInt())
         }
         logText = TextView(this).apply {
-            textSize = 12f
+            textSize = 11f
             setPadding(16, 16, 16, 16)
             typeface = android.graphics.Typeface.MONOSPACE
-            setTextColor(0xFF111111.toInt())
+            setTextColor(0xFFCCCCCC.toInt())
         }
         logScroll.addView(logText)
         root.addView(logScroll)
+    }
+
+    private fun addSetupToggle(root: LinearLayout) {
+        setupPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = android.view.View.GONE
+        }
+        addConfigBlock(setupPanel)
+        addPermissionButtons(setupPanel)
+        addDiagnosticsBlock(setupPanel)
+        root.addView(setupPanel)
+
+        val toggleBtn = Button(this).apply {
+            text = "Setup ▲"
+            setOnClickListener {
+                if (setupPanel.visibility == android.view.View.GONE) {
+                    setupPanel.visibility = android.view.View.VISIBLE
+                    text = "Setup ▼"
+                } else {
+                    setupPanel.visibility = android.view.View.GONE
+                    text = "Setup ▲"
+                }
+            }
+        }
+        root.addView(toggleBtn)
     }
 
     private fun requiredDangerousPermissions(): List<String> {
