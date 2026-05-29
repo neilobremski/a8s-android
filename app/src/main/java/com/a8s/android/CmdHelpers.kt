@@ -222,6 +222,17 @@ object CmdHelpers {
         return true
     }
 
+    // ── /download ────────────────────────────────────────────────────────
+
+    data class DownloadParts(val url: String, val filename: String?)
+
+    fun parseDownloadArgs(args: List<String>): DownloadParts? {
+        if (args.isEmpty()) return null
+        val url = args[0]
+        val filename = if (args.size > 1) args.drop(1).joinToString(" ") else null
+        return DownloadParts(url, filename)
+    }
+
     // ── /<unknown> ───────────────────────────────────────────────────────
 
     /** Single source of truth for the `known commands` listing. */
@@ -248,6 +259,7 @@ object CmdHelpers {
         "/key <NAME>",
         "/input <text>",
         "/find <label>",
+        "/download <url> [filename]",
         "/macro <step>|<step>|…",
     )
 }
