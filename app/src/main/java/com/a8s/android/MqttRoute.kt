@@ -11,7 +11,12 @@ sealed class MqttRoute {
      * whitespace. `sender` is the participant name from the envelope's
      * `from` field — force-stamped by the host's a8s router.
      */
-    data class Command(val sender: String, val name: String, val args: List<String>) : MqttRoute()
+    data class Command(
+        val sender: String,
+        val name: String,
+        val args: List<String>,
+        val files: List<EnvelopeFile> = emptyList(),
+    ) : MqttRoute()
     data class NotACommand(val sender: String) : MqttRoute()
     data class Drop(val reason: String) : MqttRoute()
     data class ParseError(val reason: String) : MqttRoute()
@@ -42,19 +47,20 @@ fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
         return MqttRoute.Drop("from=$from not in phonebook")
     }
     if (content.startsWith("/")) {
-        return parseCommand(from, content)
+        val files = parseEnvelopeFiles(json)
+        return parseCommand(from, content, files)
     }
     return MqttRoute.NotACommand(from)
 }
 
-private fun parseCommand(sender: String, content: String): MqttRoute {
+private fun parseCommand(sender: String, content: String, files: List<EnvelopeFile> = emptyList()): MqttRoute {
     val tokens = content.removePrefix("/").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
     if (tokens.isEmpty()) {
         return MqttRoute.Drop("empty command from sender=$sender")
     }
     val name = tokens[0].lowercase()
     val args = tokens.drop(1)
-    return MqttRoute.Command(sender, name, args)
+    return MqttRoute.Command(sender, name, args, files)
 }
 
 fun parseEnvelopeFiles(json: JSONObject): List<EnvelopeFile> {

@@ -32,6 +32,49 @@ class CmdHelpersTest {
         assertEquals("hello world how are you", result!!.body)
     }
 
+    // ── buildSendBody ────────────────────────────────────────────────────
+
+    @Test
+    fun `buildSendBody no files returns text unchanged`() {
+        assertEquals("hello", CmdHelpers.buildSendBody("hello", emptyList()))
+    }
+
+    @Test
+    fun `buildSendBody one file appends URL on new line`() {
+        val files = listOf(EnvelopeFile("photo.jpg", listOf("https://tempfile.org/abc123/")))
+        assertEquals("check this\nhttps://tempfile.org/abc123/", CmdHelpers.buildSendBody("check this", files))
+    }
+
+    @Test
+    fun `buildSendBody multiple files appends all URLs`() {
+        val files = listOf(
+            EnvelopeFile("a.jpg", listOf("https://s1.org/1/")),
+            EnvelopeFile("b.pdf", listOf("https://s2.org/2/")),
+        )
+        assertEquals("msg\nhttps://s1.org/1/\nhttps://s2.org/2/", CmdHelpers.buildSendBody("msg", files))
+    }
+
+    @Test
+    fun `buildSendBody file with multiple storage URLs appends all`() {
+        val files = listOf(EnvelopeFile("x.png", listOf("https://s1.org/a/", "https://s2.org/b/")))
+        assertEquals("hi\nhttps://s1.org/a/\nhttps://s2.org/b/", CmdHelpers.buildSendBody("hi", files))
+    }
+
+    @Test
+    fun `buildSendBody file with no storage URLs returns text unchanged`() {
+        val files = listOf(EnvelopeFile("local.txt", emptyList()))
+        assertEquals("text", CmdHelpers.buildSendBody("text", files))
+    }
+
+    @Test
+    fun `buildSendBody caps at SMS length limit`() {
+        val longUrl = "https://tempfile.org/" + "x".repeat(100) + "/"
+        val files = (1..20).map { EnvelopeFile("f$it.png", listOf(longUrl)) }
+        val result = CmdHelpers.buildSendBody("hello", files)
+        assertTrue(result.length <= 1520)
+        assertTrue(result.contains("[+"))
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     @Test
@@ -295,6 +338,25 @@ class CmdHelpersTest {
     fun `parseMmsArgs url with spaces is joined`() {
         val result = CmdHelpers.parseMmsArgs(listOf("5550001111", "https://example.com/path", "extra"))
         assertEquals("https://example.com/path extra", result!!.url)
+    }
+
+    // ── /send handler flow (routing → SMS body) ─────────────────────────
+
+    @Test
+    fun `send handler flow - args parsed then body built with files`() {
+        val args = listOf("5551234", "check", "this", "out")
+        val files = listOf(EnvelopeFile("photo.jpg", listOf("https://tempfile.org/abc/")))
+        val parts = CmdHelpers.parseSendArgs(args)!!
+        val body = CmdHelpers.buildSendBody(parts.body, files)
+        assertEquals("check this out\nhttps://tempfile.org/abc/", body)
+    }
+
+    @Test
+    fun `buildSendBody does not include filename only URLs`() {
+        val files = listOf(EnvelopeFile("secret.doc", listOf("https://tempfile.org/xyz/")))
+        val body = CmdHelpers.buildSendBody("here you go", files)
+        assertFalse(body.contains("secret.doc"))
+        assertTrue(body.contains("https://tempfile.org/xyz/"))
     }
 
 }

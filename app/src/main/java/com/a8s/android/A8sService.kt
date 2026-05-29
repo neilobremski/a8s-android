@@ -74,8 +74,9 @@ class A8sService : LifecycleService() {
                 if (parts == null) {
                     s.replyToSender(c, k.sender, "usage: /send <number> <message>")
                 } else {
-                    s.sendSms(parts.number, parts.body)
-                    s.replyToSender(c, k.sender, "SMS queued to ${parts.number}: ${s.preview(parts.body)}")
+                    val body = CmdHelpers.buildSendBody(parts.body, k.files)
+                    s.sendSms(parts.number, body)
+                    s.replyToSender(c, k.sender, "SMS queued to ${parts.number}: ${s.preview(body)}")
                 }
             },
             "mms" to { s, c, k -> CmdMms.run(s, c, k) },

@@ -209,4 +209,66 @@ class MqttRouteTest {
         val files = parseEnvelopeFiles(json)
         assertEquals(2, files[0].storageUrls.size)
     }
+
+    @Test
+    fun `command with files passes them through`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/send +15559990000 check this",""" +
+            """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc123/"]}]}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Command)
+        val cmd = r as MqttRoute.Command
+        assertEquals("send", cmd.name)
+        assertEquals(1, cmd.files.size)
+        assertEquals("photo.jpg", cmd.files[0].filename)
+        assertEquals(listOf("https://tempfile.org/abc123/"), cmd.files[0].storageUrls)
+    }
+
+    @Test
+    fun `command without files has empty files list`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/info"}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Command)
+        assertTrue((r as MqttRoute.Command).files.isEmpty())
+    }
+
+    // ---------- files carried through routing (end-to-end contract) --------
+
+    @Test
+    fun `command with files passes them to Command route`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload =
+            """{"to":"my-phone","from":"Alice","content":"/send 5551234 hello",""" +
+                """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Command)
+        val cmd = r as MqttRoute.Command
+        assertEquals("send", cmd.name)
+        assertEquals(listOf("5551234", "hello"), cmd.args)
+        assertEquals(1, cmd.files.size)
+        assertEquals("photo.jpg", cmd.files[0].filename)
+        assertEquals(listOf("https://tempfile.org/abc/"), cmd.files[0].storageUrls)
+    }
+
+    @Test
+    fun `command with multiple files carries all`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload =
+            """{"to":"my-phone","from":"Alice","content":"/send 5551234 check these",""" +
+                """"files":[{"filename":"a.jpg","storage":["https://tempfile.org/1/"]},""" +
+                """{"filename":"b.png","storage":["https://tempfile.org/2/"]}]}"""
+        val r = decideRoute(payload, cfg) as MqttRoute.Command
+        assertEquals(2, r.files.size)
+    }
+
+    @Test
+    fun `NotACommand does not carry files`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload =
+            """{"to":"my-phone","from":"Alice","content":"hello",""" +
+                """"files":[{"filename":"x.jpg","storage":["https://tempfile.org/x/"]}]}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.NotACommand)
+    }
 }
