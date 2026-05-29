@@ -5,13 +5,19 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.webkit.WebView
+import android.webkit.WebSettings
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -28,6 +34,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
     private lateinit var deleteSourceCheckbox: CheckBox
+    private lateinit var dashboardWebView: WebView
+    private lateinit var contentFrame: FrameLayout
+    private lateinit var setupPanel: ScrollView
+    private lateinit var tabDashboard: Button
+    private lateinit var tabLogs: Button
+    private lateinit var tabSetup: Button
 
     private val pickJsonLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -100,8 +112,6 @@ class MainActivity : AppCompatActivity() {
         updateUI()
     }
 
-    private lateinit var setupPanel: LinearLayout
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -109,10 +119,12 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 32, 32, 32)
         }
+
         addStatusBlock(root)
         addConfigDetail(root)
-        addLogBlock(root)
-        addSetupToggle(root)
+        addTabBar(root)
+        addContentArea(root)
+
         setContentView(root)
 
         A8sAndroid.onLogListener = {
@@ -122,8 +134,42 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        Dashboard.onUpdate = {
+            runOnUiThread { refreshDashboardWebView() }
+        }
+
         requestMissingPermissions()
         updateUI()
+        selectTab(Tab.DASHBOARD)
+    }
+
+    private enum class Tab { DASHBOARD, LOGS, SETUP }
+
+    private var activeTab: Tab = Tab.DASHBOARD
+
+    private fun selectTab(tab: Tab) {
+        activeTab = tab
+        val activeColor = 0xFF2196F3.toInt()
+        val inactiveColor = 0xFF424242.toInt()
+        val activeTextColor = 0xFFFFFFFF.toInt()
+        val inactiveTextColor = 0xFFBBBBBB.toInt()
+
+        tabDashboard.setBackgroundColor(if (tab == Tab.DASHBOARD) activeColor else inactiveColor)
+        tabDashboard.setTextColor(if (tab == Tab.DASHBOARD) activeTextColor else inactiveTextColor)
+        tabLogs.setBackgroundColor(if (tab == Tab.LOGS) activeColor else inactiveColor)
+        tabLogs.setTextColor(if (tab == Tab.LOGS) activeTextColor else inactiveTextColor)
+        tabSetup.setBackgroundColor(if (tab == Tab.SETUP) activeColor else inactiveColor)
+        tabSetup.setTextColor(if (tab == Tab.SETUP) activeTextColor else inactiveTextColor)
+
+        dashboardWebView.visibility = if (tab == Tab.DASHBOARD) View.VISIBLE else View.GONE
+        logScroll.visibility = if (tab == Tab.LOGS) View.VISIBLE else View.GONE
+        setupPanel.visibility = if (tab == Tab.SETUP) View.VISIBLE else View.GONE
+
+        if (tab == Tab.DASHBOARD) refreshDashboardWebView()
+        if (tab == Tab.LOGS) {
+            logText.text = A8sAndroid.getLogs()
+            logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
+        }
     }
 
     private fun addStatusBlock(root: LinearLayout) {
@@ -132,6 +178,137 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 8)
         }
         root.addView(statusText)
+    }
+
+    private fun addConfigDetail(root: LinearLayout) {
+        configDetail = TextView(this).apply {
+            textSize = 12f
+            setPadding(0, 8, 0, 8)
+        }
+        root.addView(configDetail)
+    }
+
+    private fun addTabBar(root: LinearLayout) {
+        val tabBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 8, 0, 8)
+        }
+        val tabWeight = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+        tabDashboard = Button(this).apply {
+            text = "Dashboard"
+            textSize = 13f
+            layoutParams = tabWeight
+            setOnClickListener { selectTab(Tab.DASHBOARD) }
+        }
+        tabLogs = Button(this).apply {
+            text = "Logs"
+            textSize = 13f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { selectTab(Tab.LOGS) }
+        }
+        tabSetup = Button(this).apply {
+            text = "Setup"
+            textSize = 13f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { selectTab(Tab.SETUP) }
+        }
+
+        tabBar.addView(tabDashboard)
+        tabBar.addView(tabLogs)
+        tabBar.addView(tabSetup)
+        root.addView(tabBar)
+    }
+
+    private fun addContentArea(root: LinearLayout) {
+        contentFrame = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            )
+        }
+
+        // Dashboard WebView
+        dashboardWebView = WebView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+            settings.javaScriptEnabled = true
+            settings.allowFileAccess = true
+            settings.loadWithOverviewMode = true
+            settings.useWideViewPort = true
+            setBackgroundColor(0xFF1A1A1A.toInt())
+            visibility = View.GONE
+        }
+        contentFrame.addView(dashboardWebView)
+
+        // Logs ScrollView
+        logScroll = ScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+            setBackgroundColor(0xFF1A1A1A.toInt())
+            visibility = View.GONE
+        }
+        logText = TextView(this).apply {
+            textSize = 11f
+            setPadding(16, 16, 16, 16)
+            typeface = Typeface.MONOSPACE
+            setTextColor(0xFFCCCCCC.toInt())
+        }
+        logScroll.addView(logText)
+        contentFrame.addView(logScroll)
+
+        // Setup panel
+        setupPanel = ScrollView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+            visibility = View.GONE
+        }
+        val setupContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 16, 0, 16)
+        }
+        addConfigBlock(setupContent)
+        addPermissionButtons(setupContent)
+        addDiagnosticsBlock(setupContent)
+        setupPanel.addView(setupContent)
+        contentFrame.addView(setupPanel)
+
+        root.addView(contentFrame)
+    }
+
+    private fun refreshDashboardWebView() {
+        val content = Dashboard.getContent(this)
+        val bgPath = Dashboard.getBgPath(this)
+        val bgCss = if (bgPath != null) "file://$bgPath" else ""
+        val html = """
+            <!DOCTYPE html>
+            <html>
+            <head><meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>
+            body {
+              margin: 0; padding: 16px;
+              font-family: -apple-system, sans-serif;
+              color: #fff;
+              background-color: #1a1a1a;
+              background-size: cover;
+              background-position: center;
+              min-height: 100vh;
+            }
+            </style>
+            </head>
+            <body style="background-image: url('$bgCss')">
+            $content
+            </body>
+            </html>
+        """.trimIndent()
+        dashboardWebView.loadDataWithBaseURL("file:///", html, "text/html", "UTF-8", null)
     }
 
     private fun addConfigBlock(root: LinearLayout) {
@@ -237,7 +414,7 @@ class MainActivity : AppCompatActivity() {
                 for (svc in config.services) {
                     try {
                         uploadedUrl = svc.store(dest)
-                        A8sAndroid.log("Test upload: success via ${svc.id} → $uploadedUrl")
+                        A8sAndroid.log("Test upload: success via ${svc.id} -> $uploadedUrl")
                         break
                     } catch (e: StorageException) {
                         A8sAndroid.log("Test upload: ${svc.id} failed: ${e.message}")
@@ -292,74 +469,15 @@ class MainActivity : AppCompatActivity() {
         A8sAndroid.log("Media cache: $msg")
     }
 
-    private fun addConfigDetail(root: LinearLayout) {
-        configDetail = TextView(this).apply {
-            textSize = 12f
-            setPadding(0, 8, 0, 8)
-        }
-        root.addView(configDetail)
-    }
-
-    private fun addLogBlock(root: LinearLayout) {
-        logScroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f,
-            )
-            setBackgroundColor(0xFF1A1A1A.toInt())
-        }
-        logText = TextView(this).apply {
-            textSize = 11f
-            setPadding(16, 16, 16, 16)
-            typeface = android.graphics.Typeface.MONOSPACE
-            setTextColor(0xFFCCCCCC.toInt())
-        }
-        logScroll.addView(logText)
-        root.addView(logScroll)
-    }
-
-    private fun addSetupToggle(root: LinearLayout) {
-        setupPanel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = android.view.View.GONE
-        }
-        addConfigBlock(setupPanel)
-        addPermissionButtons(setupPanel)
-        addDiagnosticsBlock(setupPanel)
-        root.addView(setupPanel)
-
-        val toggleBtn = Button(this).apply {
-            text = "Setup ▲"
-            setOnClickListener {
-                if (setupPanel.visibility == android.view.View.GONE) {
-                    setupPanel.visibility = android.view.View.VISIBLE
-                    text = "Setup ▼"
-                } else {
-                    setupPanel.visibility = android.view.View.GONE
-                    text = "Setup ▲"
-                }
-            }
-        }
-        root.addView(toggleBtn)
-    }
-
     private fun requiredDangerousPermissions(): List<String> {
-        // Permissions Android marks "dangerous" — every one of these requires
-        // a runtime grant on API 23+ regardless of manifest declaration.
-        // POST_NOTIFICATIONS / READ_MEDIA_* are only dangerous from API 33
-        // (Tiramisu) onward; older devices get them implicitly via the
-        // legacy READ_EXTERNAL_STORAGE shape.
         val perms = mutableListOf(
             Manifest.permission.SEND_SMS,
             Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_SMS,
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.READ_CONTACTS,
-            // /photo, /video
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO,
-            // /location
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
         )
@@ -376,48 +494,19 @@ class MainActivity : AppCompatActivity() {
         projectionLauncher.launch(mgr.createScreenCaptureIntent())
     }
 
-    /**
-     * Bundle the entire grant flow into one tap:
-     * 1. Request every dangerous runtime permission.
-     * 2. After the user dismisses that dialog, fire the screen-capture
-     *    projection-consent system dialog (because consent is held
-     *    in-memory and is lost on process restart — re-grant lives here
-     *    so /screenshot starts working again after an in-place upgrade).
-     * 3. If notification-listener access (RCS) isn't already granted,
-     *    open its settings page (special permission — can't be requested
-     *    via the runtime dialog).
-     *
-     * Battery-optimization exemption is auto-prompted on app start in
-     * `A8sAndroid` and is intentionally NOT bundled here.
-     */
     private fun grantAllPermissions() {
-        // Always request — even already-granted perms are tolerated by
-        // the launcher; the system just immediately resolves them as
-        // GRANTED and the per-perm flow doesn't reprompt.
         val perms = requiredDangerousPermissions()
         permissionLauncher.launch(perms.toTypedArray())
-        // The projection dialog is launched right after — Android queues
-        // the runtime perm dialog first; this lands once the user
-        // dismisses it.
         launchProjectionConsent()
         if (!isNotificationAccessGranted()) {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
-        // Accessibility access is also a special permission — can't be
-        // granted via the runtime dialog. If our service isn't enabled
-        // yet, jump to the Accessibility Settings page so it shows up
-        // in the same one-tap grant flow.
         if (!isAccessibilityServiceEnabled()) {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
-        // Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES is a colon-
-        // separated list of ComponentName flat-strings. We check for
-        // our service's component name; substring-match is fine since
-        // the package qualifier disambiguates against other apps' a11y
-        // services that happen to share a class simple name.
         val flatName = "$packageName/.A11yService"
         val expandedFlatName = "$packageName/com.a8s.android.A11yService"
         val raw = try {
@@ -449,13 +538,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Returning from Settings may have changed permission or notification-
-        // listener status; refresh so the UI reflects reality.
         updateUI()
     }
 
     override fun onDestroy() {
         A8sAndroid.onLogListener = null
+        Dashboard.onUpdate = null
         super.onDestroy()
     }
 
@@ -475,17 +563,15 @@ class MainActivity : AppCompatActivity() {
         } else {
             statusText.text = "a8s Android ${installedVersion()}\nStatus: Configured as " + config.device
             val sb = StringBuilder()
-            // Remotes — show first by name → broker, "+N more" if more.
             if (config.remotes.isEmpty()) {
                 sb.append("Remote: (none configured)\n")
             } else {
                 val (firstName, firstRc) = config.remotes.entries.first().toPair()
                 val rest = config.remotes.size - 1
-                sb.append("Remote: ").append(firstName).append(" → ").append(firstRc.broker)
+                sb.append("Remote: ").append(firstName).append(" -> ").append(firstRc.broker)
                 if (rest > 0) sb.append(" (+").append(rest).append(" more)")
                 sb.append("\n")
             }
-            // Storage services — first id, "+N more" if more.
             if (config.services.isEmpty()) {
                 sb.append("Storage: (none)\n")
             } else {
@@ -494,13 +580,12 @@ class MainActivity : AppCompatActivity() {
                 if (rest > 0) sb.append(" (+").append(rest).append(" more)")
                 sb.append("\n")
             }
-            // Phonebook — first entry, "+N more" if more.
             if (config.phonebook.isEmpty()) {
                 sb.append("Phonebook: (empty)\n")
             } else {
                 val (firstName, firstNumber) = config.phonebook.entries.first().toPair()
                 val rest = config.phonebook.size - 1
-                sb.append("Phonebook: ").append(firstName).append(" → ").append(firstNumber)
+                sb.append("Phonebook: ").append(firstName).append(" -> ").append(firstNumber)
                 if (rest > 0) sb.append(" (+").append(rest).append(" more)")
                 sb.append("\n")
             }
@@ -512,10 +597,10 @@ class MainActivity : AppCompatActivity() {
                 sb.append("\n")
             }
             sb.append("Notification access (RCS): ")
-            sb.append(if (isNotificationAccessGranted()) "granted" else "NOT granted — tap button above")
+            sb.append(if (isNotificationAccessGranted()) "granted" else "NOT granted")
             sb.append("\n")
             sb.append("Accessibility service (UI automation): ")
-            sb.append(if (isAccessibilityServiceEnabled()) "enabled" else "NOT enabled — tap button above")
+            sb.append(if (isAccessibilityServiceEnabled()) "enabled" else "NOT enabled")
             configDetail.text = sb.toString()
         }
         logText.text = A8sAndroid.getLogs()
