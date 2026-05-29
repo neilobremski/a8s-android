@@ -76,6 +76,8 @@ class A8sService : LifecycleService() {
                     s.replyToSender(c, k.sender, "SMS queued to ${parts.number}: ${s.preview(parts.body)}")
                 }
             },
+            "mms" to { s, c, k -> CmdMms.run(s, c, k) },
+            "reply" to { s, c, k -> CmdReply.run(s, c, k) },
         )
     }
 
