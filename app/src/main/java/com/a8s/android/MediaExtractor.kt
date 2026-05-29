@@ -143,7 +143,7 @@ object MediaExtractor {
         return null
     }
 
-    private fun mimeTypeToExtension(mimeType: String): String = when {
+    internal fun mimeTypeToExtension(mimeType: String): String = when {
         mimeType.startsWith("image/jpeg") -> "jpg"
         mimeType.startsWith("image/png") -> "png"
         mimeType.startsWith("image/gif") -> "gif"

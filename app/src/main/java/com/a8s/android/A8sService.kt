@@ -98,6 +98,7 @@ class A8sService : LifecycleService() {
         scheduler = { delayMs, runnable -> handler.postDelayed(runnable, delayMs) },
     )
     private var serviceStartMs: Long = 0L
+    private var mmsObserver: MmsObserver? = null
 
     // Cached MediaProjection consent. Set by MainActivity after the user
     // grants screen capture; held until the service dies. We store the
@@ -134,6 +135,11 @@ class A8sService : LifecycleService() {
             tryPublishToAnyConnected(topic, payload)
         }
         connectAll()
+        startMmsObserver()
+    }
+
+    private fun startMmsObserver() {
+        mmsObserver = MmsObserver(this, handler).also { it.register() }
     }
 
     private fun registerSentResultReceiver() {
@@ -168,6 +174,8 @@ class A8sService : LifecycleService() {
     override fun onDestroy() {
         A8sAndroid.log("Service stopping")
         instance = null
+        mmsObserver?.unregister()
+        mmsObserver = null
         retryQueue.clear()
         sentResultReceiver?.let {
             try { unregisterReceiver(it) } catch (_: Exception) { }
