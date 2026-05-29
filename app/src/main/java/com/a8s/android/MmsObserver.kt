@@ -22,6 +22,8 @@ class MmsObserver(
 ) : ContentObserver(handler) {
 
     private var lastProcessedId: Long = 0L
+    private val processedIds = mutableSetOf<Long>()
+    private val lock = Object()
 
     fun register() {
         lastProcessedId = getLatestMmsId()
@@ -46,24 +48,33 @@ class MmsObserver(
     }
 
     private fun processNewMessages() {
-        try {
-            val cursor = context.contentResolver.query(
-                Telephony.Mms.CONTENT_URI,
-                arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX),
-                "${Telephony.Mms._ID} > ? AND ${Telephony.Mms.MESSAGE_BOX} = ?",
-                arrayOf(lastProcessedId.toString(), Telephony.Mms.MESSAGE_BOX_INBOX.toString()),
-                "${Telephony.Mms._ID} ASC"
-            ) ?: return
+        synchronized(lock) {
+            try {
+                val cursor = context.contentResolver.query(
+                    Telephony.Mms.CONTENT_URI,
+                    arrayOf(Telephony.Mms._ID, Telephony.Mms.DATE, Telephony.Mms.MESSAGE_BOX),
+                    "${Telephony.Mms._ID} > ? AND ${Telephony.Mms.MESSAGE_BOX} = ?",
+                    arrayOf(lastProcessedId.toString(), Telephony.Mms.MESSAGE_BOX_INBOX.toString()),
+                    "${Telephony.Mms._ID} ASC"
+                ) ?: return
 
-            cursor.use { c ->
-                while (c.moveToNext()) {
-                    val id = c.getLong(0)
-                    processOneMms(id)
-                    lastProcessedId = id
+                cursor.use { c ->
+                    while (c.moveToNext()) {
+                        val id = c.getLong(0)
+                        if (id in processedIds) continue
+                        processedIds += id
+                        processOneMms(id)
+                        lastProcessedId = id
+                    }
                 }
+                if (processedIds.size > 100) {
+                    val keep = processedIds.sorted().takeLast(50).toSet()
+                    processedIds.clear()
+                    processedIds += keep
+                }
+            } catch (e: Exception) {
+                A8sAndroid.log("MmsObserver: error querying MMS: ${e.message}")
             }
-        } catch (e: Exception) {
-            A8sAndroid.log("MmsObserver: error querying MMS: ${e.message}")
         }
     }
 
