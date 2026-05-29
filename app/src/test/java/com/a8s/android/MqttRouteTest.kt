@@ -209,4 +209,27 @@ class MqttRouteTest {
         val files = parseEnvelopeFiles(json)
         assertEquals(2, files[0].storageUrls.size)
     }
+
+    @Test
+    fun `command with files passes them through`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/send +15559990000 check this",""" +
+            """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc123/"]}]}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Command)
+        val cmd = r as MqttRoute.Command
+        assertEquals("send", cmd.name)
+        assertEquals(1, cmd.files.size)
+        assertEquals("photo.jpg", cmd.files[0].filename)
+        assertEquals(listOf("https://tempfile.org/abc123/"), cmd.files[0].storageUrls)
+    }
+
+    @Test
+    fun `command without files has empty files list`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"/info"}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Command)
+        assertTrue((r as MqttRoute.Command).files.isEmpty())
+    }
 }

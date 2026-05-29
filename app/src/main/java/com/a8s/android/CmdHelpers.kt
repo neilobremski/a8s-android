@@ -24,6 +24,12 @@ object CmdHelpers {
         return SendParts(number, body)
     }
 
+    fun buildSendBody(text: String, files: List<EnvelopeFile>): String {
+        val urls = files.flatMap { it.storageUrls }
+        if (urls.isEmpty()) return text
+        return text + "\n" + urls.joinToString("\n")
+    }
+
     // ── /mms ─────────────────────────────────────────────────────────────
 
     data class MmsParts(val number: String, val url: String)

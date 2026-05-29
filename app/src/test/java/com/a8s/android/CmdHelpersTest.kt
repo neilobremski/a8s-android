@@ -32,6 +32,40 @@ class CmdHelpersTest {
         assertEquals("hello world how are you", result!!.body)
     }
 
+    // ── buildSendBody ────────────────────────────────────────────────────
+
+    @Test
+    fun `buildSendBody no files returns text unchanged`() {
+        assertEquals("hello", CmdHelpers.buildSendBody("hello", emptyList()))
+    }
+
+    @Test
+    fun `buildSendBody one file appends URL on new line`() {
+        val files = listOf(EnvelopeFile("photo.jpg", listOf("https://tempfile.org/abc123/")))
+        assertEquals("check this\nhttps://tempfile.org/abc123/", CmdHelpers.buildSendBody("check this", files))
+    }
+
+    @Test
+    fun `buildSendBody multiple files appends all URLs`() {
+        val files = listOf(
+            EnvelopeFile("a.jpg", listOf("https://s1.org/1/")),
+            EnvelopeFile("b.pdf", listOf("https://s2.org/2/")),
+        )
+        assertEquals("msg\nhttps://s1.org/1/\nhttps://s2.org/2/", CmdHelpers.buildSendBody("msg", files))
+    }
+
+    @Test
+    fun `buildSendBody file with multiple storage URLs appends all`() {
+        val files = listOf(EnvelopeFile("x.png", listOf("https://s1.org/a/", "https://s2.org/b/")))
+        assertEquals("hi\nhttps://s1.org/a/\nhttps://s2.org/b/", CmdHelpers.buildSendBody("hi", files))
+    }
+
+    @Test
+    fun `buildSendBody file with no storage URLs returns text unchanged`() {
+        val files = listOf(EnvelopeFile("local.txt", emptyList()))
+        assertEquals("text", CmdHelpers.buildSendBody("text", files))
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     @Test
