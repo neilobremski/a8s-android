@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Build
 import android.service.notification.StatusBarNotification
+import androidx.core.app.NotificationCompat
 import java.io.File
 
 object MediaExtractor {
@@ -42,7 +43,7 @@ object MediaExtractor {
         destDir: File,
     ): ExtractedMedia? {
         val style = try {
-            Notification.MessagingStyle
+            NotificationCompat.MessagingStyle
                 .extractMessagingStyleFromNotification(sbn.notification)
         } catch (_: Exception) {
             null

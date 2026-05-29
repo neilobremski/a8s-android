@@ -89,7 +89,7 @@ class MmsObserver(
                 uri,
                 arrayOf(Telephony.Mms.Addr.ADDRESS, Telephony.Mms.Addr.TYPE),
                 "${Telephony.Mms.Addr.TYPE} = ?",
-                arrayOf(Telephony.Mms.Addr.FROM.toString()),
+                arrayOf("137"),  // PduHeaders.FROM address type
                 null
             ) ?: return null
 
