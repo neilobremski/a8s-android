@@ -92,6 +92,13 @@ class MqttRouteTest {
         assertTrue(r is MqttRoute.Drop)
     }
 
+    @Test
+    fun `whitespace-only content from known sender yields NotACommand`() {
+        val payload = """{"to":"my-phone","from":"Clover","content":"   "}"""
+        val route = decideRoute(payload, config())
+        assertEquals(MqttRoute.NotACommand("Clover"), route)
+    }
+
     // ---------- /command routing (phonebook is the auth gate) ----------
 
     @Test
