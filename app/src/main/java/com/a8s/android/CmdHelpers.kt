@@ -241,7 +241,7 @@ object CmdHelpers {
         "/logs [N]",
         "/send <number> <message>",
         "/mms <number> <url>",
-        "/reply <sender> <text>",
+        "/reply <number> <text>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",

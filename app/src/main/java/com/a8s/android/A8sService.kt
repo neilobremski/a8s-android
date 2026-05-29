@@ -691,6 +691,7 @@ class A8sService : LifecycleService() {
         fromIdentity: String,
         body: String,
         mediaFiles: List<File> = emptyList(),
+        replyAction: android.app.Notification.Action? = null,
     ) {
         val config = A8sAndroid.config ?: return
 
@@ -722,6 +723,17 @@ class A8sService : LifecycleService() {
                 return
             }
             byContact
+        }
+
+        // Cache reply action keyed by phone number for /reply command
+        if (replyAction != null) {
+            val phoneNumber = direct.ifEmpty {
+                phoneNumberForDisplayName(fromIdentity)
+                    ?.replace("[^0-9+]".toRegex(), "") ?: ""
+            }
+            if (phoneNumber.isNotEmpty()) {
+                A8sAndroid.cacheReplyAction(phoneNumber, replyAction)
+            }
         }
 
         // Reply destined for the cluster participant whose number we
