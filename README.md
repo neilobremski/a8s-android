@@ -5,12 +5,12 @@ A high-reliability messaging bridge for the [a8s (Agent Infinity System)](https:
 ## Features
 
 - **a8s Integration:** Operates as a remote node in an a8s cluster.
-- **Bi-directional Messaging:**
-    - **MQTT to SMS:** Translates `tell` messages into physical SMS.
-    - **SMS to MQTT:** Forwards incoming SMS/RCS to the a8s cluster.
-- **RCS Support:** Intercepts notifications from Google Messages to support RCS.
+- **Command-driven messaging:** All inbound MQTT messages must be `/commands`. Non-command text receives an error with the known commands list.
+- **SMS/RCS → MQTT:** Incoming SMS or intercepted Google Messages RCS notifications publish back to the cluster.
+- **Media receive:** Extracts images from notifications (MessagingStyle dataUri, BigPicture, LargeIconBig) and observes MMS via `content://mms` ContentObserver.
+- **Auto-update:** Periodic check every 6 hours; downloads APK silently, triggers install prompt.
 - **Persistent Connectivity:** Uses foreground services, wake locks, and wifi locks to stay online 24/7.
-- **Interactive Configuration:** Simple UI to load and update `a8s.json` configuration via Android Storage Access Framework.
+- **Interactive Configuration:** Collapsible setup panel, logs fill screen by default, diagnostics buttons (Test Media Upload, Reply Action Status, Clear Media Cache).
 
 ## Configuration (a8s.json)
 
@@ -51,18 +51,11 @@ single auth gate.
 - **`device`** — the participant name this phone identifies as on the a8s
   cluster. When other agents `tell <device> "..."`, the message arrives at
   this phone.
-- **`phonebook`** — `name → phone-number` map. Doubles as the auth gate:
-  - **Outbound** (cluster → SMS): agents `tell <name> "..."` → SMS to that
-    number.
-  - **Self-receive**: messages addressed to `device` from a phonebook
-    sender forward as SMS to **that sender's own number**
-    (`phonebook[from]`). Senders not in the phonebook are dropped.
-  - **Slash commands**: a phonebook sender whose `content` starts with
-    `/` runs the command on-device; the reply is `tell`'d back to that
-    sender. There is no separate "owner" — phonebook membership *is* the
-    privilege.
-  - **Inbound SMS**: SMS from a known number publishes back to MQTT as
-    that name.
+- **`phonebook`** — `name → phone-number` map. The auth gate for all
+  slash commands: only phonebook participants can issue commands. Also
+  used for inbound SMS reverse-lookup (SMS from a known number publishes
+  back to MQTT as that name) and as the target for `/send` (the name
+  resolves to the number).
 - **`remotes`** — map of MQTT brokers this device subscribes/publishes to.
   Each entry is keyed by an arbitrary local name and contains
   `transport` (default `"mqtt"`), `broker`, `topic`, optional
@@ -81,12 +74,17 @@ single auth gate.
 
 ### Slash commands (phonebook-only)
 
-Any phonebook participant can send `tell <device> "/<command> [args]"`
-and the device executes it locally. Responses come back as
-`tell <sender> "..."` over MQTT. Senders not in the phonebook are dropped.
+All inbound MQTT messages to this device must be `/commands`. Any message
+that doesn't start with `/` receives an error reply containing the known
+commands list. Only phonebook participants can issue commands; non-phonebook
+senders are dropped.
 
 | Command | Description |
 |---|---|
+| `/send <number> <message>` | Send an SMS to `<number>` with the given text. The number must be in the phonebook. |
+| `/mms <number> <url>` | Download the media at `<url>` and send it as an MMS to `<number>`. |
+| `/reply <number> <text>` | Reply to an existing conversation using the cached notification reply action (keyed by phone number, 30-min TTL, 20-entry cap). Falls back to SMS if no reply action is cached. |
+| `/download <url> [filename]` | Download a file from `<url>` to device storage. Optional filename; defaults to the URL's last path segment. |
 | `/info` | App version, device model, Android release, MQTT state, network, battery, memory, storage, display, power, permissions, services, uptime, config. Add `verbose` (or `-v` / `--verbose`) for the full ~150-field dump (identifiers, Wi-Fi SSID/BSSID, IPs, sensors, last-known location, camera details, etc.). See `INFO_FIELD_RESEARCH.md` for the full field catalogue. |
 | `/logs [N]` | Last `N` lines of the in-app log buffer (default 50, max 500). |
 | `/update` | Fetch the latest GitHub Release APK and trigger the system install dialog. |
@@ -109,7 +107,7 @@ and the device executes it locally. Responses come back as
 | `/input <text>` | Type the rest of the line into the currently-focused input field via `ACTION_SET_TEXT`. Reports failure if no field is focused. |
 | `/find <label>` | Walk the active window's accessibility tree, find a node whose `text` or `contentDescription` contains `label` (case-insensitive), and click it. Reply attaches a screenshot. |
 | `/macro step1 \| step2 \| …` | Run a sequence of UI-automation steps with full evidence: a `before` screenshot, a screen recording of the run, an `after` screenshot, and a per-step status summary. Step verbs: `tap x y`, `longtap x y [ms]`, `swipe x1 y1 x2 y2 [ms]`, `key NAME`, `input <text>`, `find <label>`, `delay ms`. Pipes inside `input` text are not escapable — use `delay`-bracketed segments to keep the text on its own. |
-| `/<unknown>` | Replies with the list of known commands. |
+| `/<unknown>` | Replies with error + the list of known commands. |
 
 UI-automation commands (`/tap`, `/longtap`, `/swipe`, `/key`, `/input`,
 `/find`, `/macro`) require the **a8s Automation** accessibility service
@@ -133,10 +131,41 @@ One-time setup: in **Settings → Apps → a8s Android → Install unknown
 apps**, toggle **Allow from this source** on. Without it, the install
 dialog shows but the install is blocked.
 
-Phonebook membership is the only auth gate. A phonebook sender whose
-content starts with `/` runs a slash command; otherwise the message
-forwards as SMS to that sender's own number (`phonebook[from]`).
-Non-phonebook senders are dropped before any of this.
+Phonebook membership is the only auth gate. All messages must be
+`/commands`; non-command text receives an error with the known commands
+list. Non-phonebook senders are dropped before any of this.
+
+### Media send/receive
+
+**Sending media** — `/mms <number> <url>` downloads the URL and sends it
+as an MMS attachment. `/photo`, `/video`, `/audio` capture on-device and
+attach via the configured storage service.
+
+**Receiving media** — two mechanisms:
+- **MediaExtractor** (in `SmsNotificationListener`): extracts images from
+  incoming notifications via MessagingStyle `dataUri`, `BigPicture`, and
+  `LargeIconBig` extras. Uploads to the configured storage service and
+  includes the URL in the MQTT envelope's `files` array.
+- **MmsObserver**: a `ContentObserver` on `content://mms` registered by
+  `A8sService`. Detects new MMS parts, extracts the media, uploads, and
+  publishes to the cluster.
+
+### Reply action cache
+
+`A8sAndroid` maintains a cache of notification reply actions keyed by
+phone number (not display name). 30-minute TTL, 20-entry cap. When
+`/reply <number> <text>` is issued, the cached `RemoteInput` action is
+fired directly — this sends via Google Messages (preserving RCS) rather
+than falling back to SMS. If no cached action exists, falls back to
+plain SMS.
+
+### Auto-update
+
+`A8sService` runs a periodic check every 6 hours against the latest
+GitHub Release. If a newer version is found, the APK is downloaded
+silently in the background. Once downloaded, the system install prompt
+is triggered. No user interaction required until the final "Install"
+tap.
 
 ## Persistence — does it keep running with the screen off?
 

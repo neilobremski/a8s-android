@@ -8,34 +8,39 @@ contributor would want to know — especially gotchas that cost you time.
 ## What this is
 
 An Android app that bridges the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
-cluster to a phone. Acts as a participant on the MQTT topic and:
+cluster to a phone. Acts as a participant on the MQTT topic. **Command-driven
+model** — ALL inbound MQTT messages must be `/commands`. Non-command text
+receives an error reply with the known commands list.
 
-- **MQTT → SMS gateway** — `tell <name> "..."` from any cluster agent
-  becomes an SMS to whatever number that name maps to in the local
-  phonebook. The phone is invisible to senders; opacity per a8s design.
+- **Command execution** — phonebook participants issue `/send`, `/mms`,
+  `/reply`, `/download`, `/info`, `/screenshot`, etc. Phonebook membership
+  is the single auth gate; there is no separate `owner`.
 - **SMS/RCS → MQTT** — incoming SMS or intercepted Google Messages RCS
   notifications publish back to the cluster as if they came from the
   matched phonebook participant.
-- **Self-receive (forward)** — `tell <device-name>` from a phonebook
-  sender SMSs that sender's own number (`phonebook[from]`). Non-phonebook
-  senders drop.
-- **Phonebook /commands** — any phonebook participant can issue
-  `/info` (add `verbose` for the full device-fact dump per
-  `INFO_FIELD_RESEARCH.md`), `/logs [N]`, etc. and get a `tell`'d
-  response back. Phonebook membership *is* the privilege; there is no
-  separate `owner`.
+- **Media receive** — `MediaExtractor` pulls images from notification
+  styles (MessagingStyle dataUri, BigPicture, LargeIconBig); `MmsObserver`
+  watches `content://mms` for MMS parts. Both upload and publish.
+- **Auto-update** — periodic check every 6 hours, silent APK download,
+  install prompt.
 
 ## Module map (under `app/src/main/java/com/a8s/android/`)
 
 | File | Role |
 |---|---|
-| `A8sAndroid.kt` | `Application` subclass. Owns the static `Config` (parsed from JSON), the in-app log ring (50 lines, surfaced to the UI via `onLogListener`), and `loadConfig`/`saveUri`/`getSavedUri` for SAF persistence. Triggers `requestBatteryOptimizationExclusion` on first launch. |
-| `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds the MQTT client (Paho v3 standalone JAR), the wake/wifi locks, the `PublishDedup` cache, and the SMS-sent broadcast receiver. Routes inbound MQTT via `decideRoute` and acts on the result. |
-| `MainActivity.kt` | Configuration / status UI. Requests dangerous perms via `RequestMultiplePermissions`. Buttons: **Load Configuration JSON** (SAF), **Open Notification Access (for RCS)**. Shows installed version + grant state in the status panel. |
+| `A8sAndroid.kt` | `Application` subclass. Owns the static `Config` (parsed from JSON), the in-app log ring (50 lines, surfaced to the UI via `onLogListener`), the reply action cache (keyed by phone number, 30-min TTL, 20-entry cap), and `loadConfig`/`saveUri`/`getSavedUri` for SAF persistence. Triggers `requestBatteryOptimizationExclusion` on first launch. |
+| `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds the MQTT client (Paho v3 standalone JAR), the wake/wifi locks, the `PublishDedup` cache, the SMS-sent broadcast receiver, auto-update periodic check (every 6 hours), and `MmsObserver` registration. Routes inbound MQTT via `decideRoute` and acts on the result. |
+| `MainActivity.kt` | Configuration / status UI. Collapsible setup panel (logs fill screen by default). Requests dangerous perms via `RequestMultiplePermissions`. Diagnostics buttons: **Test Media Upload**, **Reply Action Status**, **Clear Media Cache**. Shows installed version + grant state in the status panel. |
 | `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent` (modern API; older PDU-extraction path was removed). Forwards to `A8sService.publishIncoming`. |
-| `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Forwards to `A8sService.publishIncoming`. |
+| `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Extracts media via `MediaExtractor` (MessagingStyle dataUri, BigPicture, LargeIconBig). Passes reply actions to the reply action cache in `A8sAndroid`. Forwards to `A8sService.publishIncoming`. |
 | `BootReceiver.kt` | Re-launches `A8sService` on `BOOT_COMPLETED`. |
-| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Variants: `Forward` / `Phonebook` / `Command(sender, name, args)` / `Drop(reason)` / `ParseError(reason)`. **All routing logic lives here so it's unit-testable.** Service layer just dispatches. |
+| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Variants: `NotACommand(sender, content)` / `Command(sender, name, args)` / `Drop(reason)` / `ParseError(reason)`. **All routing logic lives here so it's unit-testable.** Service layer just dispatches. `NotACommand` replies with an error + the known commands list. |
+| `MediaExtractor.kt` | Pure-Kotlin extraction of image data from notification extras: MessagingStyle `dataUri`, `BigPicture` bitmap, `LargeIconBig` bitmap. Returns raw bytes for upload. |
+| `MmsObserver.kt` | `ContentObserver` on `content://mms`. Detects new MMS parts, reads the media stream, uploads via configured storage service, and publishes to the cluster. Registered by `A8sService` on start. |
+| `CmdMms.kt` | `/mms <number> <url>` — downloads media from the URL and sends as MMS to the given number. |
+| `CmdReply.kt` | `/reply <number> <text>` — fires the cached notification reply action (from `A8sAndroid.replyCache`). Falls back to SMS if no action cached. |
+| `CmdDownload.kt` | `/download <url> [filename]` — downloads a file to device storage. Optional filename defaults to URL's last path segment. |
+| `CmdSend.kt` | `/send <number> <message>` — sends an SMS to the given number. Number must resolve in the phonebook. |
 | `Commands.kt` | Pure formatters for slash-command output. `InfoSnapshot` data class is filled in by `A8sService.snapshotInfo()` and passed to `renderInfo`. `renderLogs(logs, n)` does tail+header. Keeps Android-specific `Build`/`BatteryManager`/`ConnectivityManager` calls out of the formatter so it tests without a Context. |
 | `PublishDedup.kt` | Bounded LRU keyed on `<recipient>\|<body>`, default 5-minute window / 100 entries. Stops the duplicate-publish bug from Google Messages re-posting notifications. |
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
@@ -96,23 +101,17 @@ contract:
 
 1. **Self-loopback.** `from == config.device` → `Drop`. Brokers echo our
    own publishes back to every subscriber on the topic; without this
-   filter we'd try to re-route them as fresh SMS, and (when `to`
-   matches a phonebook entry) infinite-loop.
+   filter we'd try to re-route them as fresh messages.
 2. **Missing `to`.** → `Drop`.
 3. **`to == config.device`** (this device is the recipient):
    - **Phonebook gate.** `from` must be a phonebook key. Otherwise the
-     envelope drops — non-phonebook senders cannot reach the operator
-     or run commands.
+     envelope drops — non-phonebook senders cannot reach this device.
    - **Slash command.** If `content.startsWith("/")` →
      `Command(sender, verb, args)`. Verb is lowercased; empty verb
      (`"/   "`) drops.
-   - **Forward.** Else, the SMS body is the bare content, sent to
-     `phonebook[from]` (the sender's own number — typically the
-     operator's phone for the phonebook entries that map to it).
-4. **`to` in phonebook** → `Phonebook(name, number, content)`, SMSed to
-   that number with the bare content (no `from:` prefix; the phonebook
-   target is a stranger, the sender's identity isn't theirs to see).
-5. **Else** → `Drop("not in phonebook and not this device")`.
+   - **Not a command.** Else → `NotACommand(sender, content)`. The
+     service replies with an error message listing known commands.
+4. **Else** → `Drop("not addressed to this device")`.
 
 ## Configuration JSON (`a8s.json`)
 
@@ -136,9 +135,9 @@ contract:
 ```
 
 The pre-1.16.0 `forward` and `owner` keys are dropped on parse with a
-startup warning. Phonebook membership is the single auth gate, and
-`phonebook[from]` is the per-sender forward target. The MQTT
-credentials are persisted encrypted-at-rest via `SecureConfigStore`.
+startup warning. Phonebook membership is the single auth gate for slash
+commands. The MQTT credentials are persisted encrypted-at-rest via
+`SecureConfigStore`.
 
 **Multiple remotes** — `remotes` is a map; each entry gets its own
 paho client, subscriber thread, and reconnect loop. Outbound publishes
@@ -148,10 +147,9 @@ shared `handleMqttMessage` regardless of source.
 
 **Storage services** — `services` is a map keyed by local name, each
 entry dispatched by `service` field. Currently only `tempfile_org` is
-implemented. The actual upload/download wiring to the message-routing
-flows is plumbed but not yet consumed (no MMS attachment path lands
-file payloads on this side); the interface and config parsing are in
-place so future PRs that add MMS or APK-share flows can pick them up.
+implemented. Used by `MediaExtractor` and `MmsObserver` to upload
+received media, by `/mms` to download outbound media, and by
+`/screenshot`, `/photo`, `/video`, `/audio` for reply attachments.
 
 **Backwards compatibility (1.9.0 → 1.10.0):** the parser also accepts
 the legacy singular `"remote"` block (with `"url"` instead of
@@ -164,10 +162,10 @@ in-place `/update` not require the user to rewrite the config first.
   `MainActivity` does a best-effort secure delete (zero-overwrite then
   SAF delete) of the picked file after the parse succeeds; per-launch
   state, default unchecked.
-- `phonebook` plays three roles: (a) outbound `name → number` for
-  cluster→SMS; (b) inbound reverse-lookup naming the publisher on
-  SMS→MQTT; (c) auth gate for self-receive — only phonebook senders can
-  reach `device`, and the SMS forward target is their own number.
+- `phonebook` plays three roles: (a) auth gate — only phonebook senders
+  can issue commands to this device; (b) target resolution for `/send`
+  and `/mms` (name → number); (c) inbound reverse-lookup naming the
+  publisher on SMS→MQTT.
 
 ## Permissions
 
@@ -296,10 +294,9 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
 - **Don't bypass `PublishDedup`.** Google Messages re-posts
   notifications on thread updates; without dedup the cluster sees N
   copies of the same SMS reply.
-- **Don't trust the `from` for forwarding without checking the
-  phonebook.** Phonebook membership is the single auth gate for
-  self-addressed envelopes, both for slash commands and for SMS
-  forwarding.
+- **Don't trust the `from` without checking the phonebook.** Phonebook
+  membership is the single auth gate for all commands on self-addressed
+  envelopes.
 - **Don't add a fresh debug keystore.** Let the committed
   `app/debug.keystore` sign every build, or in-place upgrades break.
 
