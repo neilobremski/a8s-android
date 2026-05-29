@@ -269,27 +269,4 @@ class CmdHelpersTest {
         assertEquals("https://example.com/path extra", result!!.url)
     }
 
-    // ── /reply ───────────────────────────────────────────────────────────
-
-    @Test
-    fun `parseReplyArgs valid input`() {
-        val result = CmdHelpers.parseReplyArgs(listOf("Alice", "hello", "there"))
-        assertEquals(CmdHelpers.ReplyParts("Alice", "hello there"), result)
-    }
-
-    @Test
-    fun `parseReplyArgs just a sender returns null`() {
-        assertNull(CmdHelpers.parseReplyArgs(listOf("Alice")))
-    }
-
-    @Test
-    fun `parseReplyArgs empty returns null`() {
-        assertNull(CmdHelpers.parseReplyArgs(emptyList()))
-    }
-
-    @Test
-    fun `parseReplyArgs preserves multi-word text`() {
-        val result = CmdHelpers.parseReplyArgs(listOf("Bob", "how", "are", "you", "doing"))
-        assertEquals("how are you doing", result!!.text)
-    }
 }

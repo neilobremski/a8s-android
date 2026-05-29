@@ -691,6 +691,7 @@ class A8sService : LifecycleService() {
         fromIdentity: String,
         body: String,
         mediaFiles: List<File> = emptyList(),
+        replyAction: android.app.Notification.Action? = null,
     ) {
         val config = A8sAndroid.config ?: return
 
@@ -705,7 +706,9 @@ class A8sService : LifecycleService() {
         } else {
             emptySet()
         }
+        val resolvedNumber: String
         val matchedNames = if (phonebookNames.isNotEmpty()) {
+            resolvedNumber = direct
             phonebookNames
         } else {
             val resolved = phoneNumberForDisplayName(fromIdentity)
@@ -714,6 +717,7 @@ class A8sService : LifecycleService() {
                 A8sAndroid.log("Ignored incoming from $fromIdentity (no phone number resolved)")
                 return
             }
+            resolvedNumber = resolved
             val byContact = config.phonebook.filterValues {
                 it.replace("[^0-9+]".toRegex(), "") == resolved
             }.keys
@@ -722,6 +726,11 @@ class A8sService : LifecycleService() {
                 return
             }
             byContact
+        }
+
+        // Cache reply action keyed by phone number for /reply command
+        if (replyAction != null && resolvedNumber.isNotEmpty()) {
+            A8sAndroid.cacheReplyAction(resolvedNumber, replyAction)
         }
 
         // Reply destined for the cluster participant whose number we

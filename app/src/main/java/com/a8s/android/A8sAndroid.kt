@@ -38,7 +38,7 @@ class A8sAndroid : Application() {
         fun getLogs(): String = synchronized(logs) { logs.joinToString("\n") }
 
         // Cached notification reply actions for /reply command.
-        // Key: sender display name (from notification title).
+        // Key: sender phone number (resolved during publishIncoming).
         private const val REPLY_ACTION_TTL_MS = 30 * 60 * 1000L  // 30 minutes
         private const val REPLY_ACTION_MAX_SIZE = 20
 

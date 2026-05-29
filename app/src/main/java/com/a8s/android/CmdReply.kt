@@ -7,26 +7,27 @@ import android.os.Bundle
 object CmdReply {
 
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
-        val parts = CmdHelpers.parseReplyArgs(cmd.args)
-        if (parts == null) {
+        if (cmd.args.size < 2) {
             val available = A8sAndroid.listReplySenders()
             val hint = if (available.isEmpty()) "No cached reply actions."
-                else "Cached senders: ${available.joinToString(", ")}"
+                else "Cached numbers: ${available.joinToString(", ")}"
             service.replyToSender(
                 config, cmd.sender,
-                "usage: /reply <sender> <text>\n$hint",
+                "usage: /reply <phone-number> <text>\n$hint",
             )
             return
         }
 
-        val cached = A8sAndroid.getReplyAction(parts.sender)
+        val number = cmd.args[0]
+        val text = cmd.args.drop(1).joinToString(" ")
+        val cached = A8sAndroid.getReplyAction(number)
         if (cached == null) {
             val available = A8sAndroid.listReplySenders()
             val hint = if (available.isEmpty()) "No cached reply actions."
-                else "Cached senders: ${available.joinToString(", ")}"
+                else "Cached numbers: ${available.joinToString(", ")}"
             service.replyToSender(
                 config, cmd.sender,
-                "No reply action cached for \"${parts.sender}\"\n$hint",
+                "No reply action cached for $number\n$hint",
             )
             return
         }
@@ -34,7 +35,7 @@ object CmdReply {
         try {
             val intent = Intent()
             val bundle = Bundle()
-            bundle.putCharSequence(cached.remoteInputKey, parts.text)
+            bundle.putCharSequence(cached.remoteInputKey, text)
             AndroidRemoteInput.addResultsToIntent(
                 arrayOf(AndroidRemoteInput.Builder(cached.remoteInputKey).build()),
                 intent, bundle,
@@ -42,7 +43,7 @@ object CmdReply {
             cached.actionIntent.send(service, 0, intent)
             service.replyToSender(
                 config, cmd.sender,
-                "Reply sent to ${parts.sender} via notification action: ${parts.text}",
+                "Reply sent to $number via notification action: $text",
             )
         } catch (e: Exception) {
             service.replyToSender(
