@@ -72,6 +72,23 @@ class A8sAndroid : Application() {
             return cached
         }
 
+        // Normalized lookup: strips non-digits and does suffix matching so that
+        // "3602196756" matches "+13602196756" (country code prefix mismatch).
+        fun getReplyActionByDigits(digits: String): CachedReply? {
+            val normalized = digits.replace(Regex("[^0-9]"), "")
+            for ((key, value) in replyActions) {
+                val keyDigits = key.replace(Regex("[^0-9]"), "")
+                if (keyDigits == normalized || keyDigits.endsWith(normalized) || normalized.endsWith(keyDigits)) {
+                    if (System.currentTimeMillis() - value.timestamp > REPLY_ACTION_TTL_MS) {
+                        replyActions.remove(key)
+                        return null
+                    }
+                    return value
+                }
+            }
+            return null
+        }
+
         fun listReplySenders(): Set<String> = replyActions.keys.toSet()
 
         fun loadConfig(context: Context, uri: Uri? = null): Boolean {
