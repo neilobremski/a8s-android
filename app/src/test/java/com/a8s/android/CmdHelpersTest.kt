@@ -66,6 +66,15 @@ class CmdHelpersTest {
         assertEquals("text", CmdHelpers.buildSendBody("text", files))
     }
 
+    @Test
+    fun `buildSendBody caps at SMS length limit`() {
+        val longUrl = "https://tempfile.org/" + "x".repeat(100) + "/"
+        val files = (1..20).map { EnvelopeFile("f$it.png", listOf(longUrl)) }
+        val result = CmdHelpers.buildSendBody("hello", files)
+        assertTrue(result.length <= 1520)
+        assertTrue(result.contains("[+"))
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     @Test
