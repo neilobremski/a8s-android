@@ -689,28 +689,30 @@ class A8sService : LifecycleService() {
         // (config.device); the cluster sees the message as coming from
         // it. One envelope per matched name (rare, but a phonebook can
         // have aliases).
-        matchedNames.forEach { name ->
-            // Dedup: Google Messages re-posts notifications on thread
-            // updates and the same SMS can fire both SmsReceiver and the
-            // notification listener. Same recipient + same body within
-            // the dedup window is treated as one message.
-            if (!publishDedup.shouldPublish("$name|$body")) {
-                A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
-                return@forEach
-            }
-
-            if (mediaFiles.isNotEmpty()) {
-                Thread {
-                    val filesArr = buildFilesArray(config, mediaFiles)
+        if (mediaFiles.isNotEmpty()) {
+            // Upload once, then publish the same URLs to each matched name
+            Thread {
+                val filesArr = buildFilesArray(config, mediaFiles)
+                matchedNames.forEach { name ->
+                    if (!publishDedup.shouldPublish("$name|$body")) {
+                        A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
+                        return@forEach
+                    }
                     val payload = buildIncomingPayload(config, name, body, filesArr)
                     val (ok, fail) = publishToAllRemotes(config, payload)
                     A8sAndroid.log(
                         "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
                             "[+${mediaFiles.size} file(s)] (${ok}/${ok + fail} remotes)",
                     )
-                    mediaFiles.forEach { it.delete() }
-                }.start()
-            } else {
+                }
+                mediaFiles.forEach { it.delete() }
+            }.start()
+        } else {
+            matchedNames.forEach { name ->
+                if (!publishDedup.shouldPublish("$name|$body")) {
+                    A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
+                    return@forEach
+                }
                 val payload = buildIncomingPayload(config, name, body, org.json.JSONArray())
                 val (ok, fail) = publishToAllRemotes(config, payload)
                 A8sAndroid.log(

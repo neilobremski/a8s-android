@@ -136,6 +136,8 @@ object MediaExtractor {
             }
         } catch (e: Exception) {
             A8sAndroid.log("MediaExtract: bitmap save failed ($strategy): ${e.message}")
+        } finally {
+            bitmap.recycle()
         }
         dest.delete()
         return null

@@ -20,25 +20,28 @@ class SmsNotificationListener : NotificationListenerService() {
             if (it.length > 200) it.take(200) + "…" else it
         }
 
-        val destDir = File(cacheDir, "media-extract")
-        val media = MediaExtractor.extract(this, sbn, destDir)
-
-        if (media.isNotEmpty()) {
-            val strategies = media.joinToString(", ") { it.strategy }
-            A8sAndroid.log("Intercepted RCS from $title: $brief [+${media.size} media via $strategies]")
-            val files = media.map { it.file }
-            A8sService.instance?.publishIncoming(title, text, files)
-        } else {
-            A8sAndroid.log("Intercepted RCS from $title: $brief")
-            A8sService.instance?.publishIncoming(title, text)
-        }
-
-        // Cache reply action for /reply command
+        // Cache reply action (lightweight — no I/O)
         val replyAction = sbn.notification.actions?.find { action ->
             action.remoteInputs?.isNotEmpty() == true
         }
         if (replyAction != null) {
             A8sAndroid.cacheReplyAction(title, replyAction)
         }
+
+        // Extract media on a worker thread to avoid blocking the listener
+        Thread {
+            val destDir = File(cacheDir, "media-extract")
+            val media = MediaExtractor.extract(this, sbn, destDir)
+
+            if (media.isNotEmpty()) {
+                val strategies = media.joinToString(", ") { it.strategy }
+                A8sAndroid.log("Intercepted RCS from $title: $brief [+${media.size} media via $strategies]")
+                val files = media.map { it.file }
+                A8sService.instance?.publishIncoming(title, text, files)
+            } else {
+                A8sAndroid.log("Intercepted RCS from $title: $brief")
+                A8sService.instance?.publishIncoming(title, text)
+            }
+        }.start()
     }
 }

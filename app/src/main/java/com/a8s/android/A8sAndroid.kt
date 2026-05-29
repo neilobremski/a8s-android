@@ -39,6 +39,9 @@ class A8sAndroid : Application() {
 
         // Cached notification reply actions for /reply command.
         // Key: sender display name (from notification title).
+        private const val REPLY_ACTION_TTL_MS = 30 * 60 * 1000L  // 30 minutes
+        private const val REPLY_ACTION_MAX_SIZE = 20
+
         data class CachedReply(
             val actionIntent: PendingIntent,
             val remoteInputKey: String,
@@ -49,6 +52,10 @@ class A8sAndroid : Application() {
 
         fun cacheReplyAction(sender: String, action: Notification.Action) {
             val remoteInput = action.remoteInputs?.firstOrNull() ?: return
+            if (replyActions.size >= REPLY_ACTION_MAX_SIZE) {
+                val oldest = replyActions.minByOrNull { it.value.timestamp }?.key
+                oldest?.let { replyActions.remove(it) }
+            }
             replyActions[sender] = CachedReply(
                 actionIntent = action.actionIntent,
                 remoteInputKey = remoteInput.resultKey,
@@ -56,7 +63,14 @@ class A8sAndroid : Application() {
             )
         }
 
-        fun getReplyAction(sender: String): CachedReply? = replyActions[sender]
+        fun getReplyAction(sender: String): CachedReply? {
+            val cached = replyActions[sender] ?: return null
+            if (System.currentTimeMillis() - cached.timestamp > REPLY_ACTION_TTL_MS) {
+                replyActions.remove(sender)
+                return null
+            }
+            return cached
+        }
 
         fun listReplySenders(): Set<String> = replyActions.keys.toSet()
 
