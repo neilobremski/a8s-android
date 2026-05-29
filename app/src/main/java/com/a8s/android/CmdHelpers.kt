@@ -24,6 +24,24 @@ object CmdHelpers {
         return SendParts(number, body)
     }
 
+    // ── /mms ─────────────────────────────────────────────────────────────
+
+    data class MmsParts(val number: String, val url: String)
+
+    fun parseMmsArgs(args: List<String>): MmsParts? {
+        if (args.size < 2) return null
+        return MmsParts(args[0], args.drop(1).joinToString(" "))
+    }
+
+    // ── /reply ───────────────────────────────────────────────────────────
+
+    data class ReplyParts(val sender: String, val text: String)
+
+    fun parseReplyArgs(args: List<String>): ReplyParts? {
+        if (args.size < 2) return null
+        return ReplyParts(args[0], args.drop(1).joinToString(" "))
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     enum class CameraFacing { FRONT, BACK }
@@ -211,6 +229,8 @@ object CmdHelpers {
         "/info",
         "/logs [N]",
         "/send <number> <message>",
+        "/mms <number> <url>",
+        "/reply <sender> <text>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",

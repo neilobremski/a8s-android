@@ -645,7 +645,11 @@ class A8sService : LifecycleService() {
         }
     }
 
-    fun publishIncoming(fromIdentity: String, body: String) {
+    fun publishIncoming(
+        fromIdentity: String,
+        body: String,
+        mediaFiles: List<File> = emptyList(),
+    ) {
         val config = A8sAndroid.config ?: return
 
         // SMS gives us the raw phone number directly. RCS notifications give
@@ -692,21 +696,42 @@ class A8sService : LifecycleService() {
                 A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
                 return@forEach
             }
-            val payload = JSONObject().apply {
-                put("id", Ulid.new())
-                put("date", isoNowUtc())
-                put("from", config.device)
-                put("to", name)
-                put("content", body)
-                put("files", org.json.JSONArray())
-            }.toString()
-            val (ok, fail) = publishToAllRemotes(config, payload)
-            A8sAndroid.log(
-                "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
-                    "(${ok}/${ok + fail} remotes)",
-            )
+
+            if (mediaFiles.isNotEmpty()) {
+                Thread {
+                    val filesArr = buildFilesArray(config, mediaFiles)
+                    val payload = buildIncomingPayload(config, name, body, filesArr)
+                    val (ok, fail) = publishToAllRemotes(config, payload)
+                    A8sAndroid.log(
+                        "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
+                            "[+${mediaFiles.size} file(s)] (${ok}/${ok + fail} remotes)",
+                    )
+                    mediaFiles.forEach { it.delete() }
+                }.start()
+            } else {
+                val payload = buildIncomingPayload(config, name, body, org.json.JSONArray())
+                val (ok, fail) = publishToAllRemotes(config, payload)
+                A8sAndroid.log(
+                    "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
+                        "(${ok}/${ok + fail} remotes)",
+                )
+            }
         }
     }
+
+    private fun buildIncomingPayload(
+        config: A8sAndroid.Config,
+        toName: String,
+        body: String,
+        filesArr: org.json.JSONArray,
+    ): String = JSONObject().apply {
+        put("id", Ulid.new())
+        put("date", isoNowUtc())
+        put("from", config.device)
+        put("to", toName)
+        put("content", body)
+        put("files", filesArr)
+    }.toString()
 
     private fun isoNowUtc(): String {
         // 2026-05-02T01:23:45Z — same shape as Python a8s envelopes.

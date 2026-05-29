@@ -1,6 +1,8 @@
 package com.a8s.android
 
 import android.app.Application
+import android.app.Notification
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -34,6 +36,29 @@ class A8sAndroid : Application() {
         }
 
         fun getLogs(): String = synchronized(logs) { logs.joinToString("\n") }
+
+        // Cached notification reply actions for /reply command.
+        // Key: sender display name (from notification title).
+        data class CachedReply(
+            val actionIntent: PendingIntent,
+            val remoteInputKey: String,
+            val timestamp: Long,
+        )
+
+        private val replyActions = mutableMapOf<String, CachedReply>()
+
+        fun cacheReplyAction(sender: String, action: Notification.Action) {
+            val remoteInput = action.remoteInputs?.firstOrNull() ?: return
+            replyActions[sender] = CachedReply(
+                actionIntent = action.actionIntent,
+                remoteInputKey = remoteInput.resultKey,
+                timestamp = System.currentTimeMillis(),
+            )
+        }
+
+        fun getReplyAction(sender: String): CachedReply? = replyActions[sender]
+
+        fun listReplySenders(): Set<String> = replyActions.keys.toSet()
 
         fun loadConfig(context: Context, uri: Uri? = null): Boolean {
             if (uri != null) {
