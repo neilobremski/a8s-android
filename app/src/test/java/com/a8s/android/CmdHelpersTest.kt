@@ -232,6 +232,33 @@ class CmdHelpersTest {
         assertTrue(CmdHelpers.looksLikeText(ByteArray(0)))
     }
 
+    // ── /download ────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseDownloadArgs with URL only`() {
+        val result = CmdHelpers.parseDownloadArgs(listOf("https://example.com/file.png"))
+        assertEquals("https://example.com/file.png", result!!.url)
+        assertNull(result.filename)
+    }
+
+    @Test
+    fun `parseDownloadArgs with URL and filename`() {
+        val result = CmdHelpers.parseDownloadArgs(listOf("https://example.com/f.png", "my-file.png"))
+        assertEquals("https://example.com/f.png", result!!.url)
+        assertEquals("my-file.png", result.filename)
+    }
+
+    @Test
+    fun `parseDownloadArgs empty returns null`() {
+        assertNull(CmdHelpers.parseDownloadArgs(emptyList()))
+    }
+
+    @Test
+    fun `parseDownloadArgs multi-word filename`() {
+        val result = CmdHelpers.parseDownloadArgs(listOf("https://x.com/f", "my", "cool", "file.txt"))
+        assertEquals("my cool file.txt", result!!.filename)
+    }
+
     // ── known-commands list ──────────────────────────────────────────────
 
     @Test
@@ -240,6 +267,7 @@ class CmdHelpersTest {
         for (verb in listOf(
             "/send", "/mms", "/reply", "/photo", "/video", "/location", "/say", "/notify",
             "/ls", "/cat", "/rm", "/tap", "/longtap", "/swipe", "/key", "/input", "/find", "/macro",
+            "/download", "/dashboard",
         )) {
             assertTrue(joined.contains(verb), "missing $verb in KNOWN_COMMANDS")
         }

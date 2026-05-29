@@ -81,6 +81,7 @@ class A8sService : LifecycleService() {
             "mms" to { s, c, k -> CmdMms.run(s, c, k) },
             "reply" to { s, c, k -> CmdReply.run(s, c, k) },
             "download" to { s, c, k -> CmdDownload.run(s, c, k) },
+            "dashboard" to { s, c, k -> CmdDashboard.run(s, c, k) },
         )
     }
 

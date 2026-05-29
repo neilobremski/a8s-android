@@ -44,7 +44,7 @@ object CmdDownload {
         }
     }
 
-    private fun rawDownload(urlStr: String, dest: File): Boolean {
+    internal fun rawDownload(urlStr: String, dest: File): Boolean {
         return try {
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.connectTimeout = 15000

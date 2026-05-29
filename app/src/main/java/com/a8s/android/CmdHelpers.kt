@@ -252,5 +252,6 @@ object CmdHelpers {
         "/find <label>",
         "/download <url> [filename]",
         "/macro <step>|<step>|…",
+        "/dashboard bg <url> | content <html> | clear",
     )
 }

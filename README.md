@@ -5,11 +5,14 @@ A high-reliability messaging bridge for the [a8s (Agent Infinity System)](https:
 ## Features
 
 - **a8s Integration:** Operates as a remote node in an a8s cluster.
-- **Bi-directional Messaging:**
-    - **MQTT to SMS:** Translates `tell` messages into physical SMS.
-    - **SMS to MQTT:** Forwards incoming SMS/RCS to the a8s cluster.
-- **RCS Support:** Intercepts notifications from Google Messages to support RCS.
+- **Command-driven model:** Phonebook participants issue `/command` messages to the device; commands execute locally and reply over MQTT.
+- **Explicit SMS sending:** `/send`, `/mms`, `/reply` — no implicit forwarding.
+- **SMS/RCS to MQTT:** Incoming SMS and intercepted RCS notifications publish back to the cluster.
+- **Media receive:** Extracts images/video from RCS notifications (3 strategies) and MMS via ContentObserver.
+- **RCS reply actions:** Caches notification reply intents for `/reply` — enables RCS-capable responses without being the default SMS app.
 - **Persistent Connectivity:** Uses foreground services, wake locks, and wifi locks to stay online 24/7.
+- **Auto-update:** Checks GitHub Releases every 6 hours, auto-downloads newer APKs, prompts to install.
+- **Tabbed UI:** Dashboard (WebView), Logs, and Setup tabs. Dashboard content and background are remotely controllable via `/dashboard`.
 - **Interactive Configuration:** Simple UI to load and update `a8s.json` configuration via Android Storage Access Framework.
 
 ## Configuration (a8s.json)
@@ -51,18 +54,16 @@ single auth gate.
 - **`device`** — the participant name this phone identifies as on the a8s
   cluster. When other agents `tell <device> "..."`, the message arrives at
   this phone.
-- **`phonebook`** — `name → phone-number` map. Doubles as the auth gate:
-  - **Outbound** (cluster → SMS): agents `tell <name> "..."` → SMS to that
-    number.
-  - **Self-receive**: messages addressed to `device` from a phonebook
-    sender forward as SMS to **that sender's own number**
-    (`phonebook[from]`). Senders not in the phonebook are dropped.
+- **`phonebook`** — `name → phone-number` map. The single auth gate:
   - **Slash commands**: a phonebook sender whose `content` starts with
     `/` runs the command on-device; the reply is `tell`'d back to that
     sender. There is no separate "owner" — phonebook membership *is* the
-    privilege.
+    privilege. Non-phonebook senders are dropped.
   - **Inbound SMS**: SMS from a known number publishes back to MQTT as
     that name.
+  - **Non-command content**: messages to this device from a phonebook
+    sender that don't start with `/` produce a `NotACommand` route
+    (logged, not forwarded). There is no implicit SMS forwarding.
 - **`remotes`** — map of MQTT brokers this device subscribes/publishes to.
   Each entry is keyed by an arbitrary local name and contains
   `transport` (default `"mqtt"`), `broker`, `topic`, optional
@@ -89,6 +90,13 @@ and the device executes it locally. Responses come back as
 |---|---|
 | `/info` | App version, device model, Android release, MQTT state, network, battery, memory, storage, display, power, permissions, services, uptime, config. Add `verbose` (or `-v` / `--verbose`) for the full ~150-field dump (identifiers, Wi-Fi SSID/BSSID, IPs, sensors, last-known location, camera details, etc.). See `INFO_FIELD_RESEARCH.md` for the full field catalogue. |
 | `/logs [N]` | Last `N` lines of the in-app log buffer (default 50, max 500). |
+| `/send <number> <message>` | Send an SMS to an explicit phone number. |
+| `/mms <number> <url>` | Download media from `url`; send the URL as text SMS to `number` (true MMS requires default-SMS-app role). |
+| `/reply <number> <text>` | Fire the cached notification reply action for `number` (RCS-capable). Lists cached numbers if none match. |
+| `/download <url> [filename]` | Download a file to `/sdcard/Download`. Tries configured storage services first, falls back to raw HTTP. |
+| `/dashboard bg <url>` | Download an image and set it as the Dashboard tab background. |
+| `/dashboard content <html>` | Set arbitrary HTML as Dashboard tab content. |
+| `/dashboard clear` | Remove dashboard background and content. |
 | `/update` | Fetch the latest GitHub Release APK and trigger the system install dialog. |
 | `/update --check` | Compare the installed version to the latest release without downloading. |
 | `/update <url>` | Download + install a specific APK URL (bypasses the version comparison). |
@@ -134,9 +142,56 @@ apps**, toggle **Allow from this source** on. Without it, the install
 dialog shows but the install is blocked.
 
 Phonebook membership is the only auth gate. A phonebook sender whose
-content starts with `/` runs a slash command; otherwise the message
-forwards as SMS to that sender's own number (`phonebook[from]`).
-Non-phonebook senders are dropped before any of this.
+content starts with `/` runs a slash command; non-command content from
+a phonebook sender produces a `NotACommand` result (logged, not
+forwarded). Non-phonebook senders are dropped before any of this.
+
+## Media receive
+
+Incoming media is captured through two complementary paths:
+
+- **RCS (notification listener):** `SmsNotificationListener` intercepts
+  Google Messages notifications. `MediaExtractor` tries three strategies
+  in priority order:
+  1. `MessagingStyle.dataUri` — content URI from the structured notification.
+  2. `BigPictureStyle` / `EXTRA_PICTURE_ICON` — bitmap from expanded notification.
+  3. `EXTRA_LARGE_ICON_BIG` — fallback for large inline thumbnails (> 128px).
+
+  Extracted files are uploaded via the configured storage service and
+  attached to the outbound MQTT envelope.
+
+- **MMS (ContentObserver):** `MmsObserver` watches `content://mms` for
+  new inbox messages. After a 2-second settle delay it queries the MMS
+  parts table, extracts image/video/audio parts, and publishes them
+  the same way. This catches media that arrives as true MMS rather
+  than RCS.
+
+Reply actions from RCS notifications are cached per phone number so
+`/reply` can fire them later without being the default SMS app.
+
+## Auto-update
+
+`A8sService` schedules a periodic check (every 6 hours, first check
+60 seconds after boot) against the GitHub Releases API. If a newer
+`versionName` is found:
+
+1. The APK asset is downloaded to the cache directory.
+2. A system install prompt is shown on screen (requires the
+   "Install unknown apps" permission toggle).
+3. The operator taps **Install** once.
+
+Manual trigger: `/update` (download + prompt), `/update --check`
+(compare only), `/update <url>` (arbitrary APK URL).
+
+## Tabbed UI
+
+`MainActivity` presents three tabs:
+
+| Tab | Content |
+|---|---|
+| **Dashboard** | A full-screen `WebView` showing remotely-set HTML content and/or a background image. Controlled via `/dashboard bg <url>`, `/dashboard content <html>`, `/dashboard clear`. State is persisted across restarts (`Dashboard.kt`). |
+| **Logs** | Live scrolling view of the in-app log ring (same buffer served by `/logs`). |
+| **Setup** | Configuration loading, permission grants, status panel — the original single-screen UI. |
 
 ## Persistence — does it keep running with the screen off?
 
