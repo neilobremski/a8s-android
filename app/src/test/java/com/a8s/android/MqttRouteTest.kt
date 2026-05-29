@@ -154,6 +154,14 @@ class MqttRouteTest {
         assertTrue((r as MqttRoute.Drop).reason.contains("empty command"))
     }
 
+    @Test
+    fun `whitespace-only content produces NotACommand not Command`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload = """{"to":"my-phone","from":"Alice","content":"   "}"""
+        val r = decideRoute(payload, cfg)
+        assertEquals(MqttRoute.NotACommand("Alice"), r)
+    }
+
     // ---------- files parsing (parseEnvelopeFiles utility) ----------
 
     @Test

@@ -240,6 +240,7 @@ class CmdHelpersTest {
         for (verb in listOf(
             "/send", "/mms", "/reply", "/photo", "/video", "/location", "/say", "/notify",
             "/ls", "/cat", "/rm", "/tap", "/longtap", "/swipe", "/key", "/input", "/find", "/macro",
+            "/download",
         )) {
             assertTrue(joined.contains(verb), "missing $verb in KNOWN_COMMANDS")
         }
@@ -267,6 +268,31 @@ class CmdHelpersTest {
     fun `parseMmsArgs url with spaces is joined`() {
         val result = CmdHelpers.parseMmsArgs(listOf("5550001111", "https://example.com/path", "extra"))
         assertEquals("https://example.com/path extra", result!!.url)
+    }
+
+    // ── /download ────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseDownloadArgs url only`() {
+        val result = CmdHelpers.parseDownloadArgs(listOf("https://example.com/file.zip"))
+        assertEquals(CmdHelpers.DownloadParts("https://example.com/file.zip", null), result)
+    }
+
+    @Test
+    fun `parseDownloadArgs url and filename`() {
+        val result = CmdHelpers.parseDownloadArgs(listOf("https://example.com/file.zip", "local.zip"))
+        assertEquals(CmdHelpers.DownloadParts("https://example.com/file.zip", "local.zip"), result)
+    }
+
+    @Test
+    fun `parseDownloadArgs empty returns null`() {
+        assertNull(CmdHelpers.parseDownloadArgs(emptyList()))
+    }
+
+    @Test
+    fun `parseDownloadArgs multi-word filename preserved`() {
+        val result = CmdHelpers.parseDownloadArgs(listOf("https://x.org/f", "my", "cool", "file.txt"))
+        assertEquals("my cool file.txt", result!!.filename)
     }
 
 }
