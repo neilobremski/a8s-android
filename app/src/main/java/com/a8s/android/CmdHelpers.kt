@@ -33,15 +33,6 @@ object CmdHelpers {
         return MmsParts(args[0], args.drop(1).joinToString(" "))
     }
 
-    // ── /reply ───────────────────────────────────────────────────────────
-
-    data class ReplyParts(val sender: String, val text: String)
-
-    fun parseReplyArgs(args: List<String>): ReplyParts? {
-        if (args.size < 2) return null
-        return ReplyParts(args[0], args.drop(1).joinToString(" "))
-    }
-
     // ── /photo ────────────────────────────────────────────────────────────
 
     enum class CameraFacing { FRONT, BACK }
