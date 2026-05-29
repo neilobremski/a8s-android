@@ -67,6 +67,18 @@ class A8sService : LifecycleService() {
             "input" to { s, c, k -> CmdInput.run(s, c, k) },
             "find" to { s, c, k -> CmdFind.run(s, c, k) },
             "macro" to { s, c, k -> CmdMacro.run(s, c, k) },
+            "send" to { s, c, k ->
+                val parts = CmdHelpers.parseSendArgs(k.args)
+                if (parts == null) {
+                    s.replyToSender(c, k.sender, "usage: /send <number> <message>")
+                } else {
+                    s.sendSms(parts.number, parts.body)
+                    s.replyToSender(c, k.sender, "SMS queued to ${parts.number}: ${s.preview(parts.body)}")
+                }
+            },
+            "mms" to { s, c, k -> CmdMms.run(s, c, k) },
+            "reply" to { s, c, k -> CmdReply.run(s, c, k) },
+            "download" to { s, c, k -> CmdDownload.run(s, c, k) },
         )
     }
 
@@ -87,6 +99,7 @@ class A8sService : LifecycleService() {
         scheduler = { delayMs, runnable -> handler.postDelayed(runnable, delayMs) },
     )
     private var serviceStartMs: Long = 0L
+    private var mmsObserver: MmsObserver? = null
 
     // Cached MediaProjection consent. Set by MainActivity after the user
     // grants screen capture; held until the service dies. We store the
@@ -123,6 +136,11 @@ class A8sService : LifecycleService() {
             tryPublishToAnyConnected(topic, payload)
         }
         connectAll()
+        startMmsObserver()
+    }
+
+    private fun startMmsObserver() {
+        mmsObserver = MmsObserver(this, handler).also { it.register() }
     }
 
     private fun registerSentResultReceiver() {
@@ -157,6 +175,8 @@ class A8sService : LifecycleService() {
     override fun onDestroy() {
         A8sAndroid.log("Service stopping")
         instance = null
+        mmsObserver?.unregister()
+        mmsObserver = null
         retryQueue.clear()
         sentResultReceiver?.let {
             try { unregisterReceiver(it) } catch (_: Exception) { }
@@ -267,21 +287,10 @@ class A8sService : LifecycleService() {
     private fun handleMqttMessage(payload: String) {
         val config = A8sAndroid.config ?: return
         when (val route = decideRoute(payload, config)) {
-            is MqttRoute.Forward -> {
-                if (route.files.any { it.storageUrls.isNotEmpty() }) {
-                    Thread { forwardWithFiles(config, route) }.start()
-                } else {
-                    A8sAndroid.log("MQTT -> SMS forward to ${route.number}: ${preview(route.smsBody)}")
-                    sendSms(route.number, route.smsBody)
-                }
-            }
-            is MqttRoute.Phonebook -> {
-                if (route.files.any { it.storageUrls.isNotEmpty() }) {
-                    Thread { phonebookWithFiles(config, route) }.start()
-                } else {
-                    A8sAndroid.log("MQTT -> SMS to ${route.name} (${route.number}): ${preview(route.smsBody)}")
-                    sendSms(route.number, route.smsBody)
-                }
+            is MqttRoute.NotACommand -> {
+                val reply = "error: message must start with a /command\n" +
+                    "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
+                publishToSender(config, route.sender, reply)
             }
             is MqttRoute.Command -> {
                 A8sAndroid.log("/${route.name} from sender=${route.sender}")
@@ -296,31 +305,8 @@ class A8sService : LifecycleService() {
         }
     }
 
-    private fun forwardWithFiles(config: A8sAndroid.Config, route: MqttRoute.Forward) {
-        val destDir = File(cacheDir, "downloads")
-        val results = FileDownloader.downloadFiles(route.files, config.services, destDir)
-        val downloaded = results.mapNotNull { it.file }
-        val body = FileDownloader.buildSmsBody(route.smsBody, results)
-        A8sAndroid.log(
-            "MQTT -> SMS forward to ${route.number}: ${preview(body)} " +
-                "(${downloaded.size}/${route.files.size} files downloaded)",
-        )
-        sendSms(route.number, body)
-    }
 
-    private fun phonebookWithFiles(config: A8sAndroid.Config, route: MqttRoute.Phonebook) {
-        val destDir = File(cacheDir, "downloads")
-        val results = FileDownloader.downloadFiles(route.files, config.services, destDir)
-        val downloaded = results.mapNotNull { it.file }
-        val body = FileDownloader.buildSmsBody(route.smsBody, results)
-        A8sAndroid.log(
-            "MQTT -> SMS to ${route.name} (${route.number}): ${preview(body)} " +
-                "(${downloaded.size}/${route.files.size} files downloaded)",
-        )
-        sendSms(route.number, body)
-    }
-
-    private fun preview(s: String, max: Int = 200): String {
+    internal fun preview(s: String, max: Int = 200): String {
         val flat = s.replace("\n", " ").trim()
         return if (flat.length <= max) flat else "${flat.take(max)}…"
     }
@@ -630,7 +616,7 @@ class A8sService : LifecycleService() {
         return Pair(ok, fail)
     }
 
-    private fun sendSms(to: String, body: String) {
+    internal fun sendSms(to: String, body: String) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
             != PackageManager.PERMISSION_GRANTED) {
             A8sAndroid.log("SMS Send blocked: SEND_SMS not granted — open the app and grant permissions")
@@ -670,7 +656,11 @@ class A8sService : LifecycleService() {
         }
     }
 
-    fun publishIncoming(fromIdentity: String, body: String) {
+    fun publishIncoming(
+        fromIdentity: String,
+        body: String,
+        mediaFiles: List<File> = emptyList(),
+    ) {
         val config = A8sAndroid.config ?: return
 
         // SMS gives us the raw phone number directly. RCS notifications give
@@ -708,30 +698,53 @@ class A8sService : LifecycleService() {
         // (config.device); the cluster sees the message as coming from
         // it. One envelope per matched name (rare, but a phonebook can
         // have aliases).
-        matchedNames.forEach { name ->
-            // Dedup: Google Messages re-posts notifications on thread
-            // updates and the same SMS can fire both SmsReceiver and the
-            // notification listener. Same recipient + same body within
-            // the dedup window is treated as one message.
-            if (!publishDedup.shouldPublish("$name|$body")) {
-                A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
-                return@forEach
+        if (mediaFiles.isNotEmpty()) {
+            // Upload once, then publish the same URLs to each matched name
+            Thread {
+                val filesArr = buildFilesArray(config, mediaFiles)
+                matchedNames.forEach { name ->
+                    if (!publishDedup.shouldPublish("$name|$body")) {
+                        A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
+                        return@forEach
+                    }
+                    val payload = buildIncomingPayload(config, name, body, filesArr)
+                    val (ok, fail) = publishToAllRemotes(config, payload)
+                    A8sAndroid.log(
+                        "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
+                            "[+${mediaFiles.size} file(s)] (${ok}/${ok + fail} remotes)",
+                    )
+                }
+                mediaFiles.forEach { it.delete() }
+            }.start()
+        } else {
+            matchedNames.forEach { name ->
+                if (!publishDedup.shouldPublish("$name|$body")) {
+                    A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
+                    return@forEach
+                }
+                val payload = buildIncomingPayload(config, name, body, org.json.JSONArray())
+                val (ok, fail) = publishToAllRemotes(config, payload)
+                A8sAndroid.log(
+                    "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
+                        "(${ok}/${ok + fail} remotes)",
+                )
             }
-            val payload = JSONObject().apply {
-                put("id", Ulid.new())
-                put("date", isoNowUtc())
-                put("from", config.device)
-                put("to", name)
-                put("content", body)
-                put("files", org.json.JSONArray())
-            }.toString()
-            val (ok, fail) = publishToAllRemotes(config, payload)
-            A8sAndroid.log(
-                "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
-                    "(${ok}/${ok + fail} remotes)",
-            )
         }
     }
+
+    private fun buildIncomingPayload(
+        config: A8sAndroid.Config,
+        toName: String,
+        body: String,
+        filesArr: org.json.JSONArray,
+    ): String = JSONObject().apply {
+        put("id", Ulid.new())
+        put("date", isoNowUtc())
+        put("from", config.device)
+        put("to", toName)
+        put("content", body)
+        put("files", filesArr)
+    }.toString()
 
     private fun isoNowUtc(): String {
         // 2026-05-02T01:23:45Z — same shape as Python a8s envelopes.

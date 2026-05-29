@@ -13,6 +13,35 @@ package com.a8s.android
  */
 object CmdHelpers {
 
+    // ── /send ────────────────────────────────────────────────────────────
+
+    data class SendParts(val number: String, val body: String)
+
+    fun parseSendArgs(args: List<String>): SendParts? {
+        if (args.size < 2) return null
+        val number = args[0]
+        val body = args.drop(1).joinToString(" ")
+        return SendParts(number, body)
+    }
+
+    // ── /mms ─────────────────────────────────────────────────────────────
+
+    data class MmsParts(val number: String, val url: String)
+
+    fun parseMmsArgs(args: List<String>): MmsParts? {
+        if (args.size < 2) return null
+        return MmsParts(args[0], args.drop(1).joinToString(" "))
+    }
+
+    // ── /reply ───────────────────────────────────────────────────────────
+
+    data class ReplyParts(val sender: String, val text: String)
+
+    fun parseReplyArgs(args: List<String>): ReplyParts? {
+        if (args.size < 2) return null
+        return ReplyParts(args[0], args.drop(1).joinToString(" "))
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     enum class CameraFacing { FRONT, BACK }
@@ -193,12 +222,26 @@ object CmdHelpers {
         return true
     }
 
+    // ── /download ────────────────────────────────────────────────────────
+
+    data class DownloadParts(val url: String, val filename: String?)
+
+    fun parseDownloadArgs(args: List<String>): DownloadParts? {
+        if (args.isEmpty()) return null
+        val url = args[0]
+        val filename = if (args.size > 1) args.drop(1).joinToString(" ") else null
+        return DownloadParts(url, filename)
+    }
+
     // ── /<unknown> ───────────────────────────────────────────────────────
 
     /** Single source of truth for the `known commands` listing. */
     val KNOWN_COMMANDS: List<String> = listOf(
         "/info",
         "/logs [N]",
+        "/send <number> <message>",
+        "/mms <number> <url>",
+        "/reply <sender> <text>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",
@@ -216,6 +259,7 @@ object CmdHelpers {
         "/key <NAME>",
         "/input <text>",
         "/find <label>",
+        "/download <url> [filename]",
         "/macro <step>|<step>|…",
     )
 }

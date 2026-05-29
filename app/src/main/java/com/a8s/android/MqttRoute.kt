@@ -5,25 +5,14 @@ import org.json.JSONObject
 data class EnvelopeFile(val filename: String, val storageUrls: List<String>)
 
 sealed class MqttRoute {
-    data class Forward(
-        val number: String,
-        val smsBody: String,
-        val files: List<EnvelopeFile> = emptyList(),
-    ) : MqttRoute()
-    data class Phonebook(
-        val name: String,
-        val number: String,
-        val smsBody: String,
-        val files: List<EnvelopeFile> = emptyList(),
-    ) : MqttRoute()
     /**
-     * A phonebook-known sender has issued a `/command` to the device. `name`
+     * The paired owner has issued a `/command` to the device. `name`
      * is the bare verb (e.g. "info"), `args` is whatever followed split on
      * whitespace. `sender` is the participant name from the envelope's
-     * `from` field — force-stamped by the host's a8s router and gated here
-     * by phonebook membership; the executor doesn't re-check.
+     * `from` field — force-stamped by the host's a8s router.
      */
     data class Command(val sender: String, val name: String, val args: List<String>) : MqttRoute()
+    data class NotACommand(val sender: String) : MqttRoute()
     data class Drop(val reason: String) : MqttRoute()
     data class ParseError(val reason: String) : MqttRoute()
 }
@@ -37,8 +26,6 @@ fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
     val to = json.optString("to")
     val from = json.optString("from")
     val content = json.optString("content")
-    val files = parseEnvelopeFiles(json)
-
     if (from.isNotEmpty() && from == config.device) {
         return MqttRoute.Drop("self-loopback (from=$from is this device)")
     }
@@ -47,21 +34,17 @@ fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
         return MqttRoute.Drop("missing 'to' field")
     }
 
-    if (to == config.device) {
-        if (from !in config.phonebook.keys) {
-            return MqttRoute.Drop("from=$from not in phonebook")
-        }
-        if (content.startsWith("/")) {
-            return parseCommand(from, content)
-        }
-        val number = config.phonebook[from]
-            ?: return MqttRoute.Drop("from=$from not in phonebook")
-        return MqttRoute.Forward(number, content, files)
+    if (to != config.device) {
+        return MqttRoute.Drop("to=$to is not this device (${config.device})")
     }
 
-    val number = config.phonebook[to]
-        ?: return MqttRoute.Drop("to=$to not in phonebook and not this device")
-    return MqttRoute.Phonebook(to, number, content, files)
+    if (from !in config.phonebook.keys) {
+        return MqttRoute.Drop("from=$from not in phonebook")
+    }
+    if (content.startsWith("/")) {
+        return parseCommand(from, content)
+    }
+    return MqttRoute.NotACommand(from)
 }
 
 private fun parseCommand(sender: String, content: String): MqttRoute {

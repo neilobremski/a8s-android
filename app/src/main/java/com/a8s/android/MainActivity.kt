@@ -110,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         addStatusBlock(root)
         addConfigBlock(root)
         addPermissionButtons(root)
+        addDiagnosticsBlock(root)
         addConfigDetail(root)
         addLogBlock(root)
         setContentView(root)
@@ -173,6 +174,122 @@ class MainActivity : AppCompatActivity() {
             }
         }
         root.addView(a11yBtn)
+    }
+
+    private fun addDiagnosticsBlock(root: LinearLayout) {
+        val header = TextView(this).apply {
+            text = "Media Diagnostics"
+            textSize = 16f
+            setPadding(0, 32, 0, 8)
+        }
+        root.addView(header)
+
+        val uploadBtn = Button(this).apply {
+            text = "Test Media Upload"
+            setOnClickListener { testMediaUpload() }
+        }
+        root.addView(uploadBtn)
+
+        val replyBtn = Button(this).apply {
+            text = "Reply Action Status"
+            setOnClickListener { showReplyStatus() }
+        }
+        root.addView(replyBtn)
+
+        val clearBtn = Button(this).apply {
+            text = "Clear Media Cache"
+            setOnClickListener { clearMediaCache() }
+        }
+        root.addView(clearBtn)
+    }
+
+    private fun testMediaUpload() {
+        val config = A8sAndroid.config
+        if (config == null) {
+            Toast.makeText(this, "Not configured", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (config.services.isEmpty()) {
+            Toast.makeText(this, "No storage services configured", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Thread {
+            try {
+                val bitmap = android.graphics.Bitmap.createBitmap(100, 100, android.graphics.Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(bitmap)
+                canvas.drawColor(0xFF2196F3.toInt())
+                val paint = android.graphics.Paint().apply {
+                    color = 0xFFFFFFFF.toInt()
+                    textSize = 14f
+                    isAntiAlias = true
+                }
+                canvas.drawText("TEST", 25f, 55f, paint)
+
+                val dest = java.io.File(cacheDir, "test-upload-${System.currentTimeMillis()}.png")
+                dest.outputStream().use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                }
+                bitmap.recycle()
+
+                A8sAndroid.log("Test upload: generated ${dest.length()} byte test image")
+
+                var uploadedUrl: String? = null
+                for (svc in config.services) {
+                    try {
+                        uploadedUrl = svc.store(dest)
+                        A8sAndroid.log("Test upload: success via ${svc.id} → $uploadedUrl")
+                        break
+                    } catch (e: StorageException) {
+                        A8sAndroid.log("Test upload: ${svc.id} failed: ${e.message}")
+                    }
+                }
+
+                dest.delete()
+
+                runOnUiThread {
+                    if (uploadedUrl != null) {
+                        Toast.makeText(this, "Upload OK: $uploadedUrl", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(this, "All storage services failed", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                A8sAndroid.log("Test upload: error: ${e.message}")
+                runOnUiThread {
+                    Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun showReplyStatus() {
+        val senders = A8sAndroid.listReplySenders()
+        if (senders.isEmpty()) {
+            Toast.makeText(this, "No cached reply actions", Toast.LENGTH_SHORT).show()
+            A8sAndroid.log("Reply status: no cached actions")
+        } else {
+            val msg = "Cached reply actions: ${senders.joinToString(", ")}"
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            A8sAndroid.log("Reply status: $msg")
+        }
+    }
+
+    private fun clearMediaCache() {
+        var freed = 0L
+        val dirs = listOf("media-extract", "mms-outbound", "downloads")
+        for (name in dirs) {
+            val dir = java.io.File(cacheDir, name)
+            if (dir.exists() && dir.isDirectory) {
+                dir.listFiles()?.forEach { file ->
+                    freed += file.length()
+                    file.delete()
+                }
+                dir.delete()
+            }
+        }
+        val msg = "Cleared ${freed / 1024} KB from media cache"
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        A8sAndroid.log("Media cache: $msg")
     }
 
     private fun addConfigDetail(root: LinearLayout) {

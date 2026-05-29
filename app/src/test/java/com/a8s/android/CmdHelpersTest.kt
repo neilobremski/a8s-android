@@ -8,6 +8,30 @@ import org.junit.jupiter.api.Test
 
 class CmdHelpersTest {
 
+    // ── /send ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseSendArgs valid input`() {
+        val result = CmdHelpers.parseSendArgs(listOf("+15551234567", "hey", "there"))
+        assertEquals(CmdHelpers.SendParts("+15551234567", "hey there"), result)
+    }
+
+    @Test
+    fun `parseSendArgs just a number returns null`() {
+        assertNull(CmdHelpers.parseSendArgs(listOf("+15551234567")))
+    }
+
+    @Test
+    fun `parseSendArgs empty returns null`() {
+        assertNull(CmdHelpers.parseSendArgs(emptyList()))
+    }
+
+    @Test
+    fun `parseSendArgs preserves multi-word body`() {
+        val result = CmdHelpers.parseSendArgs(listOf("5550001111", "hello", "world", "how", "are", "you"))
+        assertEquals("hello world how are you", result!!.body)
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     @Test
@@ -214,10 +238,58 @@ class CmdHelpersTest {
     fun `known commands list covers every new verb`() {
         val joined = CmdHelpers.KNOWN_COMMANDS.joinToString(" ")
         for (verb in listOf(
-            "/photo", "/video", "/location", "/say", "/notify", "/ls", "/cat", "/rm",
-            "/tap", "/longtap", "/swipe", "/key", "/input", "/find", "/macro",
+            "/send", "/mms", "/reply", "/photo", "/video", "/location", "/say", "/notify",
+            "/ls", "/cat", "/rm", "/tap", "/longtap", "/swipe", "/key", "/input", "/find", "/macro",
         )) {
             assertTrue(joined.contains(verb), "missing $verb in KNOWN_COMMANDS")
         }
+    }
+
+    // ── /mms ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseMmsArgs valid input`() {
+        val result = CmdHelpers.parseMmsArgs(listOf("+15551234567", "https://example.com/img.jpg"))
+        assertEquals(CmdHelpers.MmsParts("+15551234567", "https://example.com/img.jpg"), result)
+    }
+
+    @Test
+    fun `parseMmsArgs just a number returns null`() {
+        assertNull(CmdHelpers.parseMmsArgs(listOf("+15551234567")))
+    }
+
+    @Test
+    fun `parseMmsArgs empty returns null`() {
+        assertNull(CmdHelpers.parseMmsArgs(emptyList()))
+    }
+
+    @Test
+    fun `parseMmsArgs url with spaces is joined`() {
+        val result = CmdHelpers.parseMmsArgs(listOf("5550001111", "https://example.com/path", "extra"))
+        assertEquals("https://example.com/path extra", result!!.url)
+    }
+
+    // ── /reply ───────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseReplyArgs valid input`() {
+        val result = CmdHelpers.parseReplyArgs(listOf("Alice", "hello", "there"))
+        assertEquals(CmdHelpers.ReplyParts("Alice", "hello there"), result)
+    }
+
+    @Test
+    fun `parseReplyArgs just a sender returns null`() {
+        assertNull(CmdHelpers.parseReplyArgs(listOf("Alice")))
+    }
+
+    @Test
+    fun `parseReplyArgs empty returns null`() {
+        assertNull(CmdHelpers.parseReplyArgs(emptyList()))
+    }
+
+    @Test
+    fun `parseReplyArgs preserves multi-word text`() {
+        val result = CmdHelpers.parseReplyArgs(listOf("Bob", "how", "are", "you", "doing"))
+        assertEquals("how are you doing", result!!.text)
     }
 }
