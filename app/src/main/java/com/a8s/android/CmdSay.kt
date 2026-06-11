@@ -27,19 +27,19 @@ object CmdSay {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val text = CmdHelpers.parseSayText(cmd.args)
         if (text == null) {
-            service.replyToSender(config, cmd.sender, "Usage: /say <text>")
+            service.replyToSender(config, cmd, "Usage: /say <text>")
             return
         }
         val context: Context = service
         var tts: TextToSpeech? = null
         try {
             tts = initTts(context) ?: run {
-                service.replyToSender(config, cmd.sender, ttsInitErrorMessage(null))
+                service.replyToSender(config, cmd, ttsInitErrorMessage(null))
                 return
             }
             val initErr = checkTtsReady(tts)
             if (initErr != null) {
-                service.replyToSender(config, cmd.sender, initErr)
+                service.replyToSender(config, cmd, initErr)
                 return
             }
             val doneLatch = CountDownLatch(1)
@@ -73,16 +73,16 @@ object CmdSay {
             }
             val rc = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utt)
             if (rc != TextToSpeech.SUCCESS) {
-                service.replyToSender(config, cmd.sender, "Speak failed: speak() rc=$rc")
+                service.replyToSender(config, cmd, "Speak failed: speak() rc=$rc")
                 return
             }
             if (!doneLatch.await(SPEAK_TIMEOUT_S, TimeUnit.SECONDS)) {
-                service.replyToSender(config, cmd.sender, "Speak failed: timeout")
+                service.replyToSender(config, cmd, "Speak failed: timeout")
                 return
             }
             val err = errorMsg[0]
             if (err != null) {
-                service.replyToSender(config, cmd.sender, "Speak failed: $err")
+                service.replyToSender(config, cmd, "Speak failed: $err")
                 return
             }
             val volPct = mediaVolumePercent(context)
@@ -91,10 +91,10 @@ object CmdSay {
                 volPct < 25 -> " (media volume is $volPct%)"
                 else -> ""
             }
-            service.replyToSender(config, cmd.sender, "Spoke: $text$volNote")
+            service.replyToSender(config, cmd, "Spoke: $text$volNote")
         } catch (e: Exception) {
             A8sAndroid.log("Say failed: ${e.message}")
-            service.replyToSender(config, cmd.sender, "Speak failed: ${e.message}")
+            service.replyToSender(config, cmd, "Speak failed: ${e.message}")
         } finally {
             try { tts?.stop() } catch (_: Exception) { }
             try { tts?.shutdown() } catch (_: Exception) { }

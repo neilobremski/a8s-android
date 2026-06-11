@@ -158,7 +158,9 @@ class A8sAndroid : Application() {
                 log("Storage services skipped: ${e.message}")
                 emptyList()
             }
-            return Config(device, phonebookMap, remotes, services)
+            val tellPrefix = Network.parseTellPrefix(json)
+            val smsAllowed = Network.parseSmsAllowedCommands(json)
+            return Config(device, phonebookMap, remotes, services, tellPrefix, smsAllowed)
         }
 
         private fun logConfigLoaded(parsed: Config, source: String) {
@@ -176,6 +178,9 @@ class A8sAndroid : Application() {
         val phonebook: Map<String, String>,
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,
+        val tellPrefix: String = PhoneNormalize.DEFAULT_TELL_PREFIX,
+        /** Verbs permitted over the SMS/RCS channel (see [SmsCommandPolicy]). */
+        val smsAllowedCommands: Set<String> = SmsCommandPolicy.DEFAULT_ALLOWED,
     )
 
     override fun onCreate() {

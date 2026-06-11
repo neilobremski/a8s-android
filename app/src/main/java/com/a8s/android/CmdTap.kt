@@ -10,22 +10,22 @@ object CmdTap {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val a11y = A11yService.instance
         if (a11y == null) {
-            service.replyToSender(config, cmd.sender, A11Y_DISABLED_MSG)
+            service.replyToSender(config, cmd, A11Y_DISABLED_MSG)
             return
         }
         if (cmd.args.size < 2) {
-            service.replyToSender(config, cmd.sender, "Usage: /tap x y")
+            service.replyToSender(config, cmd, "Usage: /tap x y")
             return
         }
         val x = cmd.args[0].toIntOrNull()
         val y = cmd.args[1].toIntOrNull()
         if (x == null || y == null) {
-            service.replyToSender(config, cmd.sender, "Usage: /tap x y (integers)")
+            service.replyToSender(config, cmd, "Usage: /tap x y (integers)")
             return
         }
         val ok = a11y.tap(x.toFloat(), y.toFloat())
         Thread.sleep(POST_GESTURE_SETTLE_MS)
         val text = if (ok) "Tapped ($x, $y)" else "Tap failed"
-        UiActionReply.send(service, config, cmd.sender, text, "tap")
+        UiActionReply.send(service, config, cmd, text, "tap")
     }
 }

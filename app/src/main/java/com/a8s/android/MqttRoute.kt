@@ -18,6 +18,8 @@ sealed class MqttRoute {
         val files: List<EnvelopeFile> = emptyList(),
         /** a8s envelope `id` (ULID). Used for idempotent SMS-style commands. */
         val envelopeId: String = "",
+        /** When set, command replies go to this number via SMS instead of MQTT. */
+        val smsReplyTo: String? = null,
     ) : MqttRoute()
     data class NotACommand(val sender: String) : MqttRoute()
     data class Drop(val reason: String) : MqttRoute()
@@ -30,11 +32,16 @@ fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
     } catch (e: org.json.JSONException) {
         return MqttRoute.ParseError(e.message ?: "invalid JSON")
     }
+    return decideRoute(json, config)
+}
+
+/** Pre-parsed overload so callers can parse the payload once. */
+fun decideRoute(json: JSONObject, config: A8sAndroid.Config): MqttRoute {
     val to = json.optString("to")
     val from = json.optString("from")
     val content = json.optString("content")
-    if (from.isNotEmpty() && from == config.device) {
-        return MqttRoute.Drop("self-loopback (from=$from is this device)")
+    if (isSelfOrigin(from, config)) {
+        return MqttRoute.Drop("self-loopback (from=$from)")
     }
 
     if (to.isEmpty()) {
@@ -49,26 +56,35 @@ fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
         return MqttRoute.Drop("from=$from not in phonebook")
     }
     if (content.startsWith("/")) {
-        val files = parseEnvelopeFiles(json)
-        val envelopeId = json.optString("id")
-        return parseCommand(from, content, files, envelopeId)
+        val (name, args) = parseSlashTokens(content)
+            ?: return MqttRoute.Drop("empty command from sender=$from")
+        return MqttRoute.Command(from, name, args, parseEnvelopeFiles(json), json.optString("id"))
     }
     return MqttRoute.NotACommand(from)
 }
 
-private fun parseCommand(
-    sender: String,
-    content: String,
-    files: List<EnvelopeFile> = emptyList(),
-    envelopeId: String = "",
-): MqttRoute {
+/**
+ * Single source of truth for "this envelope came from us". Covers both
+ * the device participant name and any of our SMS sub-identities — used
+ * by [decideRoute] and [SubIdentityRoute] so the loopback rule can't
+ * drift between the two paths.
+ */
+fun isSelfOrigin(from: String, config: A8sAndroid.Config): Boolean {
+    val f = from.trim()
+    if (f.isEmpty()) return false
+    return f == config.device ||
+        PhoneNormalize.isOwnSubIdentity(f, config.tellPrefix, config.phonebook)
+}
+
+/**
+ * Split a `/verb arg arg` string into a lowercased verb + args. Shared
+ * by [decideRoute] (MQTT) and [SmsSlashCommand] (SMS) so the parse can't
+ * diverge. Returns null when there is no verb.
+ */
+fun parseSlashTokens(content: String): Pair<String, List<String>>? {
     val tokens = content.removePrefix("/").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-    if (tokens.isEmpty()) {
-        return MqttRoute.Drop("empty command from sender=$sender")
-    }
-    val name = tokens[0].lowercase()
-    val args = tokens.drop(1)
-    return MqttRoute.Command(sender, name, args, files, envelopeId)
+    if (tokens.isEmpty()) return null
+    return tokens[0].lowercase() to tokens.drop(1)
 }
 
 fun parseEnvelopeFiles(json: JSONObject): List<EnvelopeFile> {

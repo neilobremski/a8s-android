@@ -112,6 +112,32 @@ object Network {
         }
     }
 
+    private val SMS_COMMAND_RESERVED = setOf("tell_prefix", "allowed_commands")
+
+    /** Optional `sms_command.tell_prefix` (default `text`). */
+    fun parseTellPrefix(root: JSONObject): String {
+        val obj = root.optJSONObject("sms_command") ?: return PhoneNormalize.DEFAULT_TELL_PREFIX
+        val prefix = obj.optString("tell_prefix", PhoneNormalize.DEFAULT_TELL_PREFIX).trim()
+        rejectUnknownKeys(obj, SMS_COMMAND_RESERVED)
+        return prefix.ifEmpty { PhoneNormalize.DEFAULT_TELL_PREFIX }
+    }
+
+    /**
+     * Optional `sms_command.allowed_commands` — JSON array of verb names
+     * (without the leading `/`), or `["*"]` to allow every verb. Defaults
+     * to the safe subset in [SmsCommandPolicy.DEFAULT_ALLOWED].
+     */
+    fun parseSmsAllowedCommands(root: JSONObject): Set<String> {
+        val obj = root.optJSONObject("sms_command") ?: return SmsCommandPolicy.DEFAULT_ALLOWED
+        val arr = obj.optJSONArray("allowed_commands") ?: return SmsCommandPolicy.DEFAULT_ALLOWED
+        val out = mutableSetOf<String>()
+        for (i in 0 until arr.length()) {
+            val verb = arr.optString(i).trim()
+            if (verb.isNotEmpty()) out += if (verb == SmsCommandPolicy.WILDCARD) verb else verb.removePrefix("/").lowercase()
+        }
+        return if (out.isEmpty()) SmsCommandPolicy.DEFAULT_ALLOWED else out
+    }
+
     private fun rejectUnknownKeys(spec: JSONObject, allowed: Set<String>) {
         val keys = spec.keys()
         val unknown = mutableListOf<String>()

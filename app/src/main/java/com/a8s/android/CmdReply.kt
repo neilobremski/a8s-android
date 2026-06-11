@@ -12,7 +12,7 @@ object CmdReply {
             val hint = if (available.isEmpty()) "No cached reply actions."
                 else "Cached numbers: ${available.joinToString(", ")}"
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "usage: /reply <phone-number> <text>\n$hint",
             )
             return
@@ -27,7 +27,7 @@ object CmdReply {
             val hint = if (available.isEmpty()) "No cached reply actions."
                 else "Cached numbers: ${available.joinToString(", ")}"
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "No reply action cached for $number\n$hint",
             )
             return
@@ -43,12 +43,12 @@ object CmdReply {
             )
             cached.actionIntent.send(service, 0, intent)
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "Reply sent to $number via notification action: $text",
             )
         } catch (e: Exception) {
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "Reply failed: ${e.message}. Action may have expired.",
             )
         }

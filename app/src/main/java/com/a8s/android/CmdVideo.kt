@@ -51,7 +51,7 @@ object CmdVideo {
                 context, Manifest.permission.RECORD_AUDIO,
             ) != PackageManager.PERMISSION_GRANTED) {
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "Video failed: RECORD_AUDIO permission not granted. " +
                     "Open the app and tap \"Grant All Permissions\".",
             )
@@ -59,12 +59,12 @@ object CmdVideo {
         }
         val mgr = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
         if (mgr == null) {
-            service.replyToSender(config, cmd.sender, "Video failed: camera service unavailable")
+            service.replyToSender(config, cmd, "Video failed: camera service unavailable")
             return
         }
         val cameraId = findBackCameraId(mgr)
         if (cameraId == null) {
-            service.replyToSender(config, cmd.sender, "Video failed: no back camera found")
+            service.replyToSender(config, cmd, "Video failed: no back camera found")
             return
         }
 
@@ -77,18 +77,18 @@ object CmdVideo {
         try {
             val ok = record(params)
             if (!ok || dest.length() == 0L) {
-                service.replyToSender(config, cmd.sender, "Video failed: nothing recorded")
+                service.replyToSender(config, cmd, "Video failed: nothing recorded")
                 return
             }
             A8sAndroid.log("Video recorded: ${dest.length()} bytes (${seconds}s)")
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "Video (${CmdHelpers.humanSize(dest.length())}, ${seconds}s)",
                 files = listOf(dest),
             )
         } catch (e: Exception) {
             A8sAndroid.log("Video failed: ${e.message}")
-            service.replyToSender(config, cmd.sender, "Video failed: ${e.message}")
+            service.replyToSender(config, cmd, "Video failed: ${e.message}")
         } finally {
             thread.quitSafely()
         }

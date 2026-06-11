@@ -8,7 +8,10 @@ contributor would want to know — especially gotchas that cost you time.
 ## What this is
 
 An Android app that bridges the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
-cluster to a phone. Acts as a participant on the MQTT topic and:
+cluster to a phone. Upstream daemon code lives at `~/bin/apps/a8s` on the
+operator machine — see `A8S_CLUSTER_INTEGRATION.md` for how routing, remotes,
+and opaque sub-identities relate to this app. Acts as a participant on the
+MQTT topic and:
 
 - **Command-driven model** — phonebook participants issue
   `/command args` messages; the device executes locally and replies
@@ -83,6 +86,7 @@ service layer and is exercised end-to-end on a real phone.
 
 | File | Topic |
 |---|---|
+| `A8S_CLUSTER_INTEGRATION.md` | How the upstream a8s daemon routes over MQTT vs this Android participant; sub-identity / SMS command design (#38) |
 | `MQTT_COMMAND_DEDUP.md` | Duplicate `/send` from MQTT upstream retries (issue #36) — asymmetric Wi‑Fi, daemon vs Android mitigations |
 | `INFO_FIELD_RESEARCH.md` | `/info` verbose field catalogue |
 | `RCS_RESEARCH.md` | Third-party RCS access limits and workarounds |

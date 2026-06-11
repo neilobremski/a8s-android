@@ -12,17 +12,17 @@ object CmdCat {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val pathArg = cmd.args.firstOrNull()?.takeIf { it.isNotBlank() }
         if (pathArg == null) {
-            service.replyToSender(config, cmd.sender, "Usage: /cat <path>")
+            service.replyToSender(config, cmd, "Usage: /cat <path>")
             return
         }
         try {
             val target = File(pathArg)
             if (!target.exists()) {
-                service.replyToSender(config, cmd.sender, "cat: $pathArg: no such file")
+                service.replyToSender(config, cmd, "cat: $pathArg: no such file")
                 return
             }
             if (!target.isFile) {
-                service.replyToSender(config, cmd.sender, "cat: $pathArg: not a regular file")
+                service.replyToSender(config, cmd, "cat: $pathArg: not a regular file")
                 return
             }
             val size = target.length()
@@ -31,7 +31,7 @@ object CmdCat {
                 if (CmdHelpers.looksLikeText(bytes)) {
                     val content = String(bytes, Charsets.UTF_8)
                     service.replyToSender(
-                        config, cmd.sender,
+                        config, cmd,
                         "$pathArg (${CmdHelpers.humanSize(size)})\n$content",
                     )
                     return
@@ -39,13 +39,13 @@ object CmdCat {
             }
             // Either too big for inline or detected as binary — send as attachment.
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "$pathArg (${CmdHelpers.humanSize(size)})",
                 files = listOf(target),
             )
         } catch (e: Exception) {
             A8sAndroid.log("cat failed: ${e.message}")
-            service.replyToSender(config, cmd.sender, "cat failed: ${e.message}")
+            service.replyToSender(config, cmd, "cat failed: ${e.message}")
         }
     }
 }

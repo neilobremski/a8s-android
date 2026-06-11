@@ -30,12 +30,12 @@ object CmdMacro {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val a11y = A11yService.instance
         if (a11y == null) {
-            service.replyToSender(config, cmd.sender, A11Y_DISABLED_MSG)
+            service.replyToSender(config, cmd, A11Y_DISABLED_MSG)
             return
         }
         if (!service.hasProjectionConsent()) {
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "Screen recording not authorized - tap Grant All Permissions.",
             )
             return
@@ -43,12 +43,12 @@ object CmdMacro {
 
         val raw = cmd.args.joinToString(" ").trim()
         if (raw.isEmpty()) {
-            service.replyToSender(config, cmd.sender, "Usage: /macro <step1> | <step2> | …")
+            service.replyToSender(config, cmd, "Usage: /macro <step1> | <step2> | …")
             return
         }
         val steps = MacroParser.parse(raw)
         if (steps.isEmpty()) {
-            service.replyToSender(config, cmd.sender, "/macro: no steps parsed from input")
+            service.replyToSender(config, cmd, "/macro: no steps parsed from input")
             return
         }
 
@@ -59,13 +59,13 @@ object CmdMacro {
         val recording = File(dir, "recording-$ulid.mp4")
 
         if (!service.captureScreenshotPng(before)) {
-            service.replyToSender(config, cmd.sender, "Macro failed: 'before' screenshot capture failed")
+            service.replyToSender(config, cmd, "Macro failed: 'before' screenshot capture failed")
             return
         }
 
         val recorderState = startRecording(service, recording)
         if (recorderState == null) {
-            service.replyToSender(config, cmd.sender, "Macro failed: screen recorder could not start")
+            service.replyToSender(config, cmd, "Macro failed: screen recorder could not start")
             return
         }
 
@@ -98,7 +98,7 @@ object CmdMacro {
         val files = mutableListOf(before)
         if (recording.exists() && recording.length() > 0) files += recording
         if (captured) files += after
-        service.replyToSender(config, cmd.sender, body, files = files)
+        service.replyToSender(config, cmd, body, files = files)
     }
 
     private data class StepResult(val verb: String, val ok: Boolean, val reason: String)

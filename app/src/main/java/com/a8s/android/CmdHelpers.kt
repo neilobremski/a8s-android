@@ -13,6 +13,21 @@ package com.a8s.android
  */
 object CmdHelpers {
 
+    /**
+     * Upper bound on the text body of an SMS reply / forward. Command
+     * output (`/info` verbose, `/logs`, `/ls`, `/cat`) is otherwise
+     * unbounded and would fan out into many billable SMS segments and
+     * risk carrier truncation. ~8 segments of GSM-7.
+     */
+    const val MAX_SMS_REPLY_CHARS: Int = 1200
+
+    /** Truncate [text] to [MAX_SMS_REPLY_CHARS] with an ellipsis marker. */
+    fun capForSms(text: String, max: Int = MAX_SMS_REPLY_CHARS): String {
+        if (text.length <= max) return text
+        val marker = "… [truncated]"
+        return text.take((max - marker.length).coerceAtLeast(0)) + marker
+    }
+
     // ── /send ────────────────────────────────────────────────────────────
 
     data class SendParts(val number: String, val body: String)
@@ -267,7 +282,16 @@ object CmdHelpers {
     }
 
     private fun normalizePhone(number: String): String =
-        number.replace(Regex("[^0-9+]"), "")
+        PhoneNormalize.normalizePhoneDigits(number)
+
+    // ── /tell ─────────────────────────────────────────────────────────────
+
+    data class TellParts(val agent: String, val message: String)
+
+    fun parseTellArgs(args: List<String>): TellParts? {
+        if (args.size < 2) return null
+        return TellParts(args[0], args.drop(1).joinToString(" "))
+    }
 
     // ── /<unknown> ───────────────────────────────────────────────────────
 
@@ -278,6 +302,7 @@ object CmdHelpers {
         "/send <number> <message>",
         "/mms <number> <url>",
         "/reply <number> <text>",
+        "/tell <agent> <message>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",
