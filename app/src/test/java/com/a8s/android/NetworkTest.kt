@@ -175,4 +175,30 @@ class NetworkTest {
         val json = JSONObject("""{"sms_command":{"tell_prefix":"text","extra":1}}""")
         assertThrows(IllegalArgumentException::class.java) { Network.parseTellPrefix(json) }
     }
+
+    // ---------- parseSmsAllowedCommands ----------
+
+    @Test
+    fun `parseSmsAllowedCommands defaults to safe subset`() {
+        assertEquals(SmsCommandPolicy.DEFAULT_ALLOWED, Network.parseSmsAllowedCommands(JSONObject("{ }")))
+    }
+
+    @Test
+    fun `parseSmsAllowedCommands reads explicit list and strips slashes`() {
+        val json = JSONObject("""{"sms_command":{"allowed_commands":["/info","TELL","rm"]}}""")
+        assertEquals(setOf("info", "tell", "rm"), Network.parseSmsAllowedCommands(json))
+    }
+
+    @Test
+    fun `parseSmsAllowedCommands preserves wildcard`() {
+        val json = JSONObject("""{"sms_command":{"allowed_commands":["*"]}}""")
+        assertEquals(setOf("*"), Network.parseSmsAllowedCommands(json))
+    }
+
+    @Test
+    fun `parseSmsAllowedCommands allows tell_prefix alongside allowed_commands`() {
+        val json = JSONObject("""{"sms_command":{"tell_prefix":"sms","allowed_commands":["info"]}}""")
+        assertEquals("sms", Network.parseTellPrefix(json))
+        assertEquals(setOf("info"), Network.parseSmsAllowedCommands(json))
+    }
 }

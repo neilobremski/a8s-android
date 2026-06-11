@@ -81,3 +81,34 @@ private val inboundCommandDedup = CommandDedup()
 /** Process-wide dedup gate for inbound SMS-style slash commands. */
 fun gateInboundSmsCommand(cmd: MqttRoute.Command): Boolean =
     inboundCommandDedup.gateSmsCommand(cmd)
+
+private val smsOriginCommandDedup = CommandDedup()
+
+/**
+ * Dedup for commands that originate over SMS/RCS. A single inbound
+ * message can surface both via [SmsReceiver] and via the Google Messages
+ * notification (which also re-posts on thread updates), so every verb —
+ * not just the SMS-sending ones — needs a gate before it executes.
+ *
+ * Keyed on the matched phonebook participant (not the raw number) so the
+ * two delivery paths — which can present the sender as `+1…` digits vs a
+ * Contacts-resolved number — collapse to the same key.
+ */
+fun gateSmsOriginCommand(participant: String, body: String): Boolean =
+    smsOriginCommandDedup.shouldExecute(
+        envelopeId = null,
+        payloadKey = "smsorigin|$participant|${body.trim()}",
+    )
+
+private val subIdentityForwardDedup = CommandDedup()
+
+/**
+ * Dedup for inbound sub-identity envelopes forwarded to the operator's
+ * SMS. Stops broker redelivery / upstream retries from amplifying into
+ * multiple texts. Keyed on envelope ULID plus destination + content.
+ */
+fun gateSubIdentityForward(envelopeId: String, smsTo: String, content: String): Boolean =
+    subIdentityForwardDedup.shouldExecute(
+        envelopeId = envelopeId,
+        payloadKey = "subfwd|${PhoneNormalize.normalizePhoneDigits(smsTo)}|${content.trim()}",
+    )

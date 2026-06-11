@@ -41,4 +41,10 @@ class SubIdentityRouteTest {
         val payload = """{"from":"Bob","to":"my-phone","content":"/info"}"""
         assertNull(SubIdentityRoute.tryForward(payload, config()))
     }
+
+    @Test
+    fun `tryForward drops loopback from device itself`() {
+        val payload = """{"from":"my-phone","to":"text-13602196756","content":"echo"}"""
+        assertNull(SubIdentityRoute.tryForward(payload, config()))
+    }
 }

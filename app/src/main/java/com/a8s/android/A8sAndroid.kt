@@ -159,7 +159,8 @@ class A8sAndroid : Application() {
                 emptyList()
             }
             val tellPrefix = Network.parseTellPrefix(json)
-            return Config(device, phonebookMap, remotes, services, tellPrefix)
+            val smsAllowed = Network.parseSmsAllowedCommands(json)
+            return Config(device, phonebookMap, remotes, services, tellPrefix, smsAllowed)
         }
 
         private fun logConfigLoaded(parsed: Config, source: String) {
@@ -178,6 +179,8 @@ class A8sAndroid : Application() {
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,
         val tellPrefix: String = PhoneNormalize.DEFAULT_TELL_PREFIX,
+        /** Verbs permitted over the SMS/RCS channel (see [SmsCommandPolicy]). */
+        val smsAllowedCommands: Set<String> = SmsCommandPolicy.DEFAULT_ALLOWED,
     )
 
     override fun onCreate() {

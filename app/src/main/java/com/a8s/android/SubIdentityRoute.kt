@@ -22,12 +22,15 @@ object SubIdentityRoute {
         } catch (_: org.json.JSONException) {
             return null
         }
+        return tryForward(json, config)
+    }
+
+    /** Pre-parsed overload so the inbound payload is parsed once. */
+    fun tryForward(json: JSONObject, config: A8sAndroid.Config): Forward? {
         val to = json.optString("to").trim()
         if (to.isEmpty()) return null
         val from = json.optString("from").trim()
-        if (from.isNotEmpty() && PhoneNormalize.isOwnSubIdentity(from, config.tellPrefix, config.phonebook)) {
-            return null
-        }
+        if (isSelfOrigin(from, config)) return null
         val smsTo = PhoneNormalize.resolveSubIdentityToNumber(to, config.tellPrefix, config.phonebook)
             ?: return null
         return Forward(

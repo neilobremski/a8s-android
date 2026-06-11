@@ -410,4 +410,19 @@ class CmdHelpersTest {
         assertNull(CmdHelpers.parseTellArgs(emptyList()))
     }
 
+    // ── SMS reply cap ─────────────────────────────────────────────────────
+
+    @Test
+    fun `capForSms passes through short text`() {
+        assertEquals("hello", CmdHelpers.capForSms("hello"))
+    }
+
+    @Test
+    fun `capForSms truncates long text with marker and stays within budget`() {
+        val long = "x".repeat(5000)
+        val capped = CmdHelpers.capForSms(long)
+        assertTrue(capped.length <= CmdHelpers.MAX_SMS_REPLY_CHARS)
+        assertTrue(capped.endsWith("… [truncated]"))
+    }
+
 }

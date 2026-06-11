@@ -10,19 +10,24 @@ import java.io.File
 object SmsCommandDelivery {
 
     fun forwardToSms(service: A8sService, config: A8sAndroid.Config, forward: SubIdentityRoute.Forward) {
-        val preview = service.preview(forward.content)
+        if (!gateSubIdentityForward(forward.envelopeId, forward.smsToNumber, forward.content)) {
+            A8sAndroid.log("Sub-identity forward to ${PhoneNormalize.maskNumber(forward.smsToNumber)} skipped (duplicate)")
+            return
+        }
+        // Attribute the sender so the operator can tell agents apart.
+        val attributed = if (forward.from.isNotBlank()) "${forward.from}: ${forward.content}" else forward.content
         A8sAndroid.log(
-            "MQTT sub-identity -> SMS ${forward.from} -> ${forward.smsToNumber}: $preview " +
-                "[+${forward.files.size} file(s)]",
+            "MQTT sub-identity -> SMS ${forward.from} -> ${PhoneNormalize.maskNumber(forward.smsToNumber)}: " +
+                "${service.preview(forward.content)} [+${forward.files.size} file(s)]",
         )
         if (forward.files.isEmpty()) {
-            service.sendSms(forward.smsToNumber, forward.content)
+            service.sendSms(forward.smsToNumber, CmdHelpers.capForSms(attributed))
             return
         }
         Thread {
             val destDir = File(service.cacheDir, "subidentity-in")
             val results = FileDownloader.downloadFiles(forward.files, config.services, destDir)
-            val body = FileDownloader.buildSmsBody(forward.content, results)
+            val body = FileDownloader.buildSmsBody(CmdHelpers.capForSms(attributed), results)
             service.sendSms(forward.smsToNumber, body)
             results.mapNotNull { it.file }.forEach { it.delete() }
         }.start()
@@ -34,10 +39,11 @@ object SmsCommandDelivery {
         text: String,
         files: List<File>,
     ): String {
-        if (files.isEmpty()) return text
+        val capped = CmdHelpers.capForSms(text)
+        if (files.isEmpty()) return capped
         val arr = service.buildFilesArrayForSms(config, files)
         val envelopeFiles = envelopeFilesFromJSONArray(arr)
-        return CmdHelpers.buildSendBody(text, envelopeFiles)
+        return CmdHelpers.buildSendBody(capped, envelopeFiles)
     }
 
     private fun envelopeFilesFromJSONArray(arr: JSONArray): List<EnvelopeFile> {

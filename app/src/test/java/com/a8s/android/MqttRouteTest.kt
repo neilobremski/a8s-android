@@ -2,6 +2,8 @@ package com.a8s.android
 
 import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -53,6 +55,32 @@ class MqttRouteTest {
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
         assertTrue((r as MqttRoute.Drop).reason.contains("self-loopback"))
+    }
+
+    @Test
+    fun `self-loopback from own sub-identity is dropped`() {
+        val cfg = config(phonebook = mapOf("Clover" to "+13602196756"))
+        val payload = """{"to":"Clover","from":"text-13602196756","content":"hi"}"""
+        val r = decideRoute(payload, cfg)
+        assertTrue(r is MqttRoute.Drop)
+        assertTrue((r as MqttRoute.Drop).reason.contains("self-loopback"))
+    }
+
+    @Test
+    fun `isSelfOrigin matches device and sub-identity but not others`() {
+        val cfg = config(phonebook = mapOf("Clover" to "+13602196756"))
+        assertTrue(isSelfOrigin("my-phone", cfg))
+        assertTrue(isSelfOrigin("text-13602196756", cfg))
+        assertFalse(isSelfOrigin("Clover", cfg))
+        assertFalse(isSelfOrigin("", cfg))
+    }
+
+    @Test
+    fun `parseSlashTokens splits verb and args`() {
+        val parsed = parseSlashTokens("/Tell Bob hi there")
+        assertEquals("tell", parsed!!.first)
+        assertEquals(listOf("Bob", "hi", "there"), parsed.second)
+        assertNull(parseSlashTokens("/   "))
     }
 
     @Test

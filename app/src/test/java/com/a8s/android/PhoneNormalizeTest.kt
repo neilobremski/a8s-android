@@ -37,6 +37,30 @@ class PhoneNormalizeTest {
     }
 
     @Test
+    fun `phonebookDigitsMatch refuses short suffix collisions`() {
+        // "6756" is below MIN_SUFFIX_MATCH_DIGITS, so it must not match by tail.
+        assertFalse(PhoneNormalize.phonebookDigitsMatch("6756", "+13602196756"))
+    }
+
+    @Test
+    fun `phonebookDigitsMatch still matches identical short numbers`() {
+        assertTrue(PhoneNormalize.phonebookDigitsMatch("12345", "12345"))
+    }
+
+    @Test
+    fun `matchPhonebookEntries returns all matching aliases`() {
+        val pb = mapOf("Neil" to "+13602196756", "NeilAlt" to "3602196756", "Other" to "+15550001111")
+        val matches = PhoneNormalize.matchPhonebookEntries("13602196756", pb).map { it.key }.toSet()
+        assertEquals(setOf("Neil", "NeilAlt"), matches)
+    }
+
+    @Test
+    fun `maskNumber hides all but last four`() {
+        assertEquals("••••6756", PhoneNormalize.maskNumber("+1 360-219-6756"))
+        assertEquals("••••", PhoneNormalize.maskNumber("123"))
+    }
+
+    @Test
     fun `matchPhonebookEntry finds first matching value`() {
         val entry = PhoneNormalize.matchPhonebookEntry("3602196756", phonebook)
         assertEquals("Neil", entry?.key)

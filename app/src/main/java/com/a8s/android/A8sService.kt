@@ -278,11 +278,17 @@ class A8sService : LifecycleService() {
 
     private fun handleMqttMessage(payload: String) {
         val config = A8sAndroid.config ?: return
-        SubIdentityRoute.tryForward(payload, config)?.let { forward ->
+        val json = try {
+            JSONObject(payload)
+        } catch (e: org.json.JSONException) {
+            A8sAndroid.log("MQTT Handle Error: ${e.message}")
+            return
+        }
+        SubIdentityRoute.tryForward(json, config)?.let { forward ->
             SmsCommandDelivery.forwardToSms(this, config, forward)
             return
         }
-        when (val route = decideRoute(payload, config)) {
+        when (val route = decideRoute(json, config)) {
             is MqttRoute.NotACommand -> {
                 val reply = "error: message must start with a /command\n" +
                     "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")

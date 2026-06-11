@@ -1,44 +1,52 @@
 package com.a8s.android
 
 /**
- * Inbound SMS/RCS bodies that are slash commands from phonebook numbers (#38).
+ * Classifies inbound SMS/RCS bodies that look like slash commands (#38).
+ *
+ * Phonebook membership (matched on the sender's number) is the auth
+ * gate, and [SmsCommandPolicy] further restricts which verbs may run
+ * over this unauthenticated channel.
  */
 object SmsSlashCommand {
 
-    data class Authorized(
-        /** Phonebook participant name (for logging / MQTT-style sender field). */
-        val participantName: String,
-        /** Raw phonebook value — SMS reply destination. */
-        val replyNumber: String,
-        val command: MqttRoute.Command,
-    )
+    sealed class Result {
+        /** A permitted command from a known phonebook number. */
+        data class Authorized(
+            val participantName: String,
+            val replyNumber: String,
+            val command: MqttRoute.Command,
+        ) : Result()
 
-    /**
-     * @return authorized command, or null if this is not an SMS slash command.
-     */
-    fun tryParse(fromNumber: String, body: String, config: A8sAndroid.Config): Authorized? {
-        if (!body.startsWith("/")) return null
-        val entry = PhoneNormalize.matchPhonebookEntry(fromNumber, config.phonebook) ?: return null
-        val parsed = parseSlashContent(body) ?: return null
-        return Authorized(
+        /** Known phonebook number, but the verb is not allowed over SMS. */
+        data class Forbidden(
+            val participantName: String,
+            val replyNumber: String,
+            val verb: String,
+        ) : Result()
+
+        /** Not a slash command, or not from a recognized phonebook number. */
+        object NotForSms : Result()
+    }
+
+    fun classify(fromNumber: String, body: String, config: A8sAndroid.Config): Result {
+        if (!body.startsWith("/")) return Result.NotForSms
+        val entry = PhoneNormalize.matchPhonebookEntry(fromNumber, config.phonebook)
+            ?: return Result.NotForSms
+        val (name, args) = parseSlashTokens(body) ?: return Result.NotForSms
+        if (!SmsCommandPolicy.isAllowed(name, config.smsAllowedCommands)) {
+            return Result.Forbidden(entry.key, entry.value, name)
+        }
+        return Result.Authorized(
             participantName = entry.key,
             replyNumber = entry.value,
             command = MqttRoute.Command(
                 sender = entry.key,
-                name = parsed.name,
-                args = parsed.args,
+                name = name,
+                args = args,
                 files = emptyList(),
                 envelopeId = "",
                 smsReplyTo = entry.value,
             ),
         )
-    }
-
-    data class ParsedSlash(val name: String, val args: List<String>)
-
-    fun parseSlashContent(content: String): ParsedSlash? {
-        val tokens = content.removePrefix("/").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        if (tokens.isEmpty()) return null
-        return ParsedSlash(tokens[0].lowercase(), tokens.drop(1))
     }
 }

@@ -14,6 +14,9 @@ import java.io.File
  */
 object IncomingSmsRouter {
 
+    /** A resolved phonebook sender: their number plus every matching name. */
+    private data class Sender(val number: String, val names: Set<String>)
+
     fun publishIncoming(
         service: A8sService,
         fromIdentity: String,
@@ -22,78 +25,105 @@ object IncomingSmsRouter {
         replyAction: android.app.Notification.Action? = null,
     ) {
         val config = A8sAndroid.config ?: return
+        val sender = resolveSender(service, config, fromIdentity) ?: return
 
-        val direct = fromIdentity.replace("[^0-9+]".toRegex(), "")
-        val phonebookNames = if (direct.isNotEmpty()) {
-            config.phonebook.filterValues { it.replace("[^0-9+]".toRegex(), "") == direct }.keys
-        } else {
-            emptySet()
-        }
-        val resolvedNumber: String
-        val matchedNames = if (phonebookNames.isNotEmpty()) {
-            resolvedNumber = direct
-            phonebookNames
-        } else {
-            val resolved = phoneNumberForDisplayName(service, fromIdentity)
-                ?.replace("[^0-9+]".toRegex(), "")
-            if (resolved.isNullOrEmpty()) {
-                A8sAndroid.log("Ignored incoming from $fromIdentity (no phone number resolved)")
-                return
-            }
-            resolvedNumber = resolved
-            val byContact = config.phonebook.filterValues {
-                it.replace("[^0-9+]".toRegex(), "") == resolved
-            }.keys
-            if (byContact.isEmpty()) {
-                A8sAndroid.log("Ignored incoming from $fromIdentity (resolved to $resolved, not in phonebook)")
-                return
-            }
-            byContact
+        if (replyAction != null && sender.number.isNotBlank()) {
+            A8sAndroid.cacheReplyAction(sender.number, replyAction)
         }
 
-        if (replyAction != null && resolvedNumber.isNotEmpty()) {
-            A8sAndroid.cacheReplyAction(resolvedNumber, replyAction)
-        }
+        if (handleSmsCommand(service, config, sender.number, body)) return
 
-        SmsSlashCommand.tryParse(resolvedNumber, body, config)?.let { authorized ->
+        publishToMatched(service, config, sender.names, body, mediaFiles)
+    }
+
+    /** Match the incoming address/display-name to phonebook entries. */
+    private fun resolveSender(
+        service: A8sService,
+        config: A8sAndroid.Config,
+        fromIdentity: String,
+    ): Sender? {
+        val direct = PhoneNormalize.matchPhonebookEntries(fromIdentity, config.phonebook)
+        if (direct.isNotEmpty()) {
+            return Sender(fromIdentity, direct.map { it.key }.toSet())
+        }
+        val resolved = phoneNumberForDisplayName(service, fromIdentity)
+        if (resolved.isNullOrBlank()) {
+            A8sAndroid.log("Ignored incoming from $fromIdentity (no phone number resolved)")
+            return null
+        }
+        val byContact = PhoneNormalize.matchPhonebookEntries(resolved, config.phonebook)
+        if (byContact.isEmpty()) {
             A8sAndroid.log(
-                "SMS command /${authorized.command.name} from ${authorized.replyNumber}",
+                "Ignored incoming from $fromIdentity " +
+                    "(resolved to ${PhoneNormalize.maskNumber(resolved)}, not in phonebook)",
             )
-            CommandDispatch.handle(authorized.command, service::executeCommand)
-            return
+            return null
         }
+        return Sender(resolved, byContact.map { it.key }.toSet())
+    }
 
+    /** @return true when the body was an SMS command (executed or rejected). */
+    private fun handleSmsCommand(
+        service: A8sService,
+        config: A8sAndroid.Config,
+        number: String,
+        body: String,
+    ): Boolean = when (val result = SmsSlashCommand.classify(number, body, config)) {
+        is SmsSlashCommand.Result.Authorized -> {
+            if (gateSmsOriginCommand(result.participantName, body)) {
+                A8sAndroid.log("SMS command /${result.command.name} from ${PhoneNormalize.maskNumber(number)}")
+                CommandDispatch.handle(result.command, service::executeCommand)
+            } else {
+                A8sAndroid.log("SMS command /${result.command.name} ignored (duplicate)")
+            }
+            true
+        }
+        is SmsSlashCommand.Result.Forbidden -> {
+            A8sAndroid.log(
+                "SMS command /${result.verb} from ${PhoneNormalize.maskNumber(number)} " +
+                    "rejected (not permitted over SMS)",
+            )
+            service.sendSms(result.replyNumber, "'/${result.verb}' is not permitted over SMS.")
+            true
+        }
+        SmsSlashCommand.Result.NotForSms -> false
+    }
+
+    private fun publishToMatched(
+        service: A8sService,
+        config: A8sAndroid.Config,
+        names: Set<String>,
+        body: String,
+        mediaFiles: List<File>,
+    ) {
         if (mediaFiles.isNotEmpty()) {
             Thread {
                 val filesArr = service.buildFilesArray(config, mediaFiles)
-                matchedNames.forEach { name ->
-                    if (!service.publishDedup.shouldPublish("$name|$body")) {
-                        A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
-                        return@forEach
-                    }
-                    val payload = buildIncomingPayload(config, name, body, filesArr)
-                    val (ok, fail) = service.publishToAllRemotes(config, payload)
-                    A8sAndroid.log(
-                        "SMS -> MQTT ${config.device} -> $name: ${service.preview(body)} " +
-                            "[+${mediaFiles.size} file(s)] (${ok}/${ok + fail} remotes)",
-                    )
-                }
+                names.forEach { name -> publishOne(service, config, name, body, filesArr) }
                 mediaFiles.forEach { it.delete() }
             }.start()
         } else {
-            matchedNames.forEach { name ->
-                if (!service.publishDedup.shouldPublish("$name|$body")) {
-                    A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
-                    return@forEach
-                }
-                val payload = buildIncomingPayload(config, name, body, JSONArray())
-                val (ok, fail) = service.publishToAllRemotes(config, payload)
-                A8sAndroid.log(
-                    "SMS -> MQTT ${config.device} -> $name: ${service.preview(body)} " +
-                        "(${ok}/${ok + fail} remotes)",
-                )
-            }
+            names.forEach { name -> publishOne(service, config, name, body, JSONArray()) }
         }
+    }
+
+    private fun publishOne(
+        service: A8sService,
+        config: A8sAndroid.Config,
+        name: String,
+        body: String,
+        filesArr: JSONArray,
+    ) {
+        if (!service.publishDedup.shouldPublish("$name|$body")) {
+            A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
+            return
+        }
+        val payload = buildIncomingPayload(config, name, body, filesArr)
+        val (ok, fail) = service.publishToAllRemotes(config, payload)
+        val fileNote = if (filesArr.length() > 0) "[+${filesArr.length()} file(s)] " else ""
+        A8sAndroid.log(
+            "SMS -> MQTT ${config.device} -> $name: ${service.preview(body)} $fileNote(${ok}/${ok + fail} remotes)",
+        )
     }
 
     private fun buildIncomingPayload(

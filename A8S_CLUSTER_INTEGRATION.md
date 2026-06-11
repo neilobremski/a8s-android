@@ -287,23 +287,63 @@ roles today:
 
 - Inbound SMS from a number whose normalized digits match any phonebook
   **value** may execute slash commands and receive replies via SMS.
-- **No verb allowlist** — authorized numbers get the **full** command
-  surface (`KNOWN_COMMANDS`), same as MQTT phonebook senders today.
 - For the current single-operator setup (one entry, your number), that
   number is the only one that can SMS-command the device.
 
-**We are not adding a separate allowlist in v1** unless a future need
-requires a strict subset of phonebook numbers. The phonebook values *are*
-the allowlist. Document in config/README:
-
-> SMS slash commands: any sender whose number matches a value in
-> `phonebook` (after digit normalization).
-
-Optional later: `sms_command.allowed_numbers` to override without
-changing phonebook used for MQTT naming — out of scope until needed.
+**Number matching** is canonical-digits with a suffix tolerance for a
+missing country code, but only above `MIN_SUFFIX_MATCH_DIGITS` (7) so a
+short number / short-code can't match a phonebook entry by tail
+coincidence. The SMS path and the MQTT-publish path both go through
+`PhoneNormalize.matchPhonebookEntries` so they can't diverge.
 
 **Contrast with MQTT:** MQTT still requires `from` ∈ phonebook **keys**.
 SMS uses phonebook **values**. Same config file, different field.
+
+### SMS threat model — verb allow-list (`SmsCommandPolicy`)
+
+SMS/RCS is **not** a trustworthy auth channel and is treated as such:
+
+- Raw SMS originating addresses are spoofable (SMS gateways let a sender
+  set an arbitrary `from`). MQTT `from` is host-stamped over TLS; SMS has
+  no equivalent.
+- The RCS path is marginally harder to spoof (the transport authenticates
+  the registered number), **but** `SmsNotificationListener` only sees a
+  notification *display name* resolved through `Contacts` — a fuzzy,
+  attacker-influenceable mapping. So in practice both channels collapse to
+  "a phone number / name we matched," which is not a security boundary.
+
+Because of this, SMS-originated commands are gated by a **verb allow-list**
+(`SmsCommandPolicy`), independent of channel:
+
+- **Safe-by-default subset:** `info, logs, location, say, notify, ls,
+  find, dashboard, photo, video, audio, screenshot, tell`. Observe /
+  notify / capture only.
+- **Excluded by default** (require explicit opt-in): `update` (installs
+  arbitrary APKs), `rm` / `cat` (filesystem delete / exfiltration),
+  `send` / `mms` / `reply` (sends SMS *as the victim*), and the
+  UI-automation verbs `macro` / `tap` / `longtap` / `swipe` / `key` /
+  `input`.
+- **Opt in** via `sms_command.allowed_commands` — an explicit verb list,
+  or `["*"]` to accept the full surface (operator accepts the risk).
+- A disallowed verb from a known phonebook number gets a short
+  `'/verb' is not permitted over SMS.` reply; MQTT commands are
+  unaffected and keep the full surface.
+
+```json
+"sms_command": {
+  "tell_prefix": "text",
+  "allowed_commands": ["info", "logs", "location", "tell"]
+}
+```
+
+**Anti-abuse:** SMS-originated commands are deduped per
+participant+body (a single message can arrive via both `SmsReceiver` and
+the Google Messages notification), and sub-identity → SMS forwards are
+deduped per envelope ULID + destination so broker redelivery can't
+amplify into multiple texts. Sub-identity forwards remain open by design
+(any agent the operator `/tell`'d — or any agent at all — can reply to the
+operator's number); this is a deliberate trade-off, mitigated by dedup and
+the masked-number logging.
 
 ### Sub-identity lifetime: always-on (not session-scoped)
 
