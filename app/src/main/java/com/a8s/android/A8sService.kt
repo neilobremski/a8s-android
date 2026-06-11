@@ -174,7 +174,6 @@ class A8sService : LifecycleService() {
         }.start()
     }
 
-
     private fun registerSentResultReceiver() {
         if (sentResultReceiver != null) return
         val r = object : BroadcastReceiver() {
@@ -316,7 +315,6 @@ class A8sService : LifecycleService() {
         return if (total == 0) "Disconnected" else "Connected $connected/$total"
     }
 
-
     private fun handleMqttMessage(payload: String) {
         val config = A8sAndroid.config ?: return
         when (val route = decideRoute(payload, config)) {
@@ -325,10 +323,7 @@ class A8sService : LifecycleService() {
                     "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
                 publishToSender(config, route.sender, reply)
             }
-            is MqttRoute.Command -> {
-                A8sAndroid.log("/${route.name} from sender=${route.sender}")
-                executeCommand(route)
-            }
+            is MqttRoute.Command -> CommandDispatch.handle(route, ::executeCommand)
             is MqttRoute.Drop -> {
                 A8sAndroid.log("MQTT -> drop (${route.reason})")
             }
@@ -337,7 +332,6 @@ class A8sService : LifecycleService() {
             }
         }
     }
-
 
     internal fun preview(s: String, max: Int = 200): String {
         val flat = s.replace("\n", " ").trim()

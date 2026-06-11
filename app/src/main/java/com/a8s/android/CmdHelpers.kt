@@ -242,6 +242,33 @@ object CmdHelpers {
         return DownloadParts(url, filename)
     }
 
+    // ── outbound SMS dedup (issue #36) ───────────────────────────────────
+
+    /** Fingerprint for [CommandDedup] on commands that queue outbound SMS/RCS. */
+    fun outboundSmsDedupKey(cmd: MqttRoute.Command): String? {
+        return when (cmd.name) {
+            "send" -> {
+                val parts = parseSendArgs(cmd.args) ?: return null
+                val body = buildSendBody(parts.body, cmd.files)
+                "send|${normalizePhone(parts.number)}|$body"
+            }
+            "reply" -> {
+                if (cmd.args.size < 2) return null
+                val number = cmd.args[0]
+                val text = cmd.args.drop(1).joinToString(" ")
+                "reply|${normalizePhone(number)}|$text"
+            }
+            "mms" -> {
+                val parts = parseMmsArgs(cmd.args) ?: return null
+                "mms|${normalizePhone(parts.number)}|${parts.url}"
+            }
+            else -> null
+        }
+    }
+
+    private fun normalizePhone(number: String): String =
+        number.replace(Regex("[^0-9+]"), "")
+
     // ── /<unknown> ───────────────────────────────────────────────────────
 
     /** Single source of truth for the `known commands` listing. */

@@ -263,6 +263,16 @@ class MqttRouteTest {
     }
 
     @Test
+    fun `command carries envelope id from json`() {
+        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
+        val payload =
+            """{"id":"01KTVEBX9HA8ZHMH5BP2EA38WQ","to":"my-phone","from":"Alice",""" +
+                """"content":"/send +15559990000 hi"}"""
+        val r = decideRoute(payload, cfg) as MqttRoute.Command
+        assertEquals("01KTVEBX9HA8ZHMH5BP2EA38WQ", r.envelopeId)
+    }
+
+    @Test
     fun `NotACommand does not carry files`() {
         val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
         val payload =

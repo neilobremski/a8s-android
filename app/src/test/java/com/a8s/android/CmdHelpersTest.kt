@@ -340,6 +340,42 @@ class CmdHelpersTest {
         assertEquals("https://example.com/path extra", result!!.url)
     }
 
+    // ── outbound SMS dedup keys ──────────────────────────────────────────
+
+    @Test
+    fun `outboundSmsDedupKey send includes normalized number and body`() {
+        val cmd = MqttRoute.Command(
+            sender = "Alice",
+            name = "send",
+            args = listOf("+1 (555) 000-1111", "hello"),
+            envelopeId = "01ABC",
+        )
+        assertEquals(
+            "send|+15550001111|hello",
+            CmdHelpers.outboundSmsDedupKey(cmd),
+        )
+    }
+
+    @Test
+    fun `outboundSmsDedupKey reply joins text after number`() {
+        val cmd = MqttRoute.Command(
+            sender = "Alice",
+            name = "reply",
+            args = listOf("+15550001111", "thanks", "again"),
+            envelopeId = "01ABC",
+        )
+        assertEquals(
+            "reply|+15550001111|thanks again",
+            CmdHelpers.outboundSmsDedupKey(cmd),
+        )
+    }
+
+    @Test
+    fun `outboundSmsDedupKey returns null for non-sms verbs`() {
+        val cmd = MqttRoute.Command("Alice", "info", emptyList())
+        assertNull(CmdHelpers.outboundSmsDedupKey(cmd))
+    }
+
     // ── /send handler flow (routing → SMS body) ─────────────────────────
 
     @Test
