@@ -308,7 +308,7 @@ class CmdHelpersTest {
     fun `known commands list covers every new verb`() {
         val joined = CmdHelpers.KNOWN_COMMANDS.joinToString(" ")
         for (verb in listOf(
-            "/send", "/mms", "/reply", "/photo", "/video", "/location", "/say", "/notify",
+            "/send", "/mms", "/reply", "/tell", "/photo", "/video", "/location", "/say", "/notify",
             "/ls", "/cat", "/rm", "/tap", "/longtap", "/swipe", "/key", "/input", "/find", "/macro",
             "/download", "/dashboard",
         )) {
@@ -351,7 +351,7 @@ class CmdHelpersTest {
             envelopeId = "01ABC",
         )
         assertEquals(
-            "send|+15550001111|hello",
+            "send|15550001111|hello",
             CmdHelpers.outboundSmsDedupKey(cmd),
         )
     }
@@ -365,7 +365,7 @@ class CmdHelpersTest {
             envelopeId = "01ABC",
         )
         assertEquals(
-            "reply|+15550001111|thanks again",
+            "reply|15550001111|thanks again",
             CmdHelpers.outboundSmsDedupKey(cmd),
         )
     }
@@ -393,6 +393,21 @@ class CmdHelpersTest {
         val body = CmdHelpers.buildSendBody("here you go", files)
         assertFalse(body.contains("secret.doc"))
         assertTrue(body.contains("https://tempfile.org/xyz/"))
+    }
+
+    // ── /tell ─────────────────────────────────────────────────────────────
+
+    @Test
+    fun `parseTellArgs requires agent and message`() {
+        val result = CmdHelpers.parseTellArgs(listOf("Bob", "hello", "world"))
+        assertEquals("Bob", result!!.agent)
+        assertEquals("hello world", result.message)
+    }
+
+    @Test
+    fun `parseTellArgs too few args returns null`() {
+        assertNull(CmdHelpers.parseTellArgs(listOf("Bob")))
+        assertNull(CmdHelpers.parseTellArgs(emptyList()))
     }
 
 }

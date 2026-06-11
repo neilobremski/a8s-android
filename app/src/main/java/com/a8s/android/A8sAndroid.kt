@@ -158,7 +158,8 @@ class A8sAndroid : Application() {
                 log("Storage services skipped: ${e.message}")
                 emptyList()
             }
-            return Config(device, phonebookMap, remotes, services)
+            val tellPrefix = Network.parseTellPrefix(json)
+            return Config(device, phonebookMap, remotes, services, tellPrefix)
         }
 
         private fun logConfigLoaded(parsed: Config, source: String) {
@@ -176,6 +177,7 @@ class A8sAndroid : Application() {
         val phonebook: Map<String, String>,
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,
+        val tellPrefix: String = PhoneNormalize.DEFAULT_TELL_PREFIX,
     )
 
     override fun onCreate() {

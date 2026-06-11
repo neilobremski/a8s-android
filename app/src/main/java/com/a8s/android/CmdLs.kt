@@ -14,11 +14,11 @@ object CmdLs {
         try {
             val target = File(pathArg)
             if (!target.exists()) {
-                service.replyToSender(config, cmd.sender, "ls: $pathArg: no such file or directory")
+                service.replyToSender(config, cmd, "ls: $pathArg: no such file or directory")
                 return
             }
             if (!target.isDirectory) {
-                service.replyToSender(config, cmd.sender, "ls: $pathArg: not a directory")
+                service.replyToSender(config, cmd, "ls: $pathArg: not a directory")
                 return
             }
             val children = target.listFiles()?.toList().orEmpty()
@@ -30,10 +30,10 @@ object CmdLs {
                     isDirectory = it.isDirectory,
                 )
             }
-            service.replyToSender(config, cmd.sender, CmdHelpers.renderLs(target.canonicalPath, entries))
+            service.replyToSender(config, cmd, CmdHelpers.renderLs(target.canonicalPath, entries))
         } catch (e: Exception) {
             A8sAndroid.log("ls failed: ${e.message}")
-            service.replyToSender(config, cmd.sender, "ls failed: ${e.message}")
+            service.replyToSender(config, cmd, "ls failed: ${e.message}")
         }
     }
 }

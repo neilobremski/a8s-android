@@ -7,7 +7,7 @@ object CmdMms {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val parts = CmdHelpers.parseMmsArgs(cmd.args)
         if (parts == null) {
-            service.replyToSender(config, cmd.sender, "usage: /mms <number> <url>")
+            service.replyToSender(config, cmd, "usage: /mms <number> <url>")
             return
         }
 
@@ -34,7 +34,7 @@ object CmdMms {
         if (!downloaded) {
             service.sendSms(parts.number, "Media: ${parts.url}")
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "Could not download media; sent URL as text SMS to ${parts.number}",
             )
             return
@@ -45,7 +45,7 @@ object CmdMms {
         // successfully (future: proper MMS when app is default SMS).
         service.sendSms(parts.number, "Media: ${parts.url}")
         service.replyToSender(
-            config, cmd.sender,
+            config, cmd,
             "Sent URL as text SMS to ${parts.number} (MMS requires default SMS app role). " +
                 "File downloaded: ${dest.length()} bytes",
         )

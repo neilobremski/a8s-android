@@ -18,6 +18,8 @@ sealed class MqttRoute {
         val files: List<EnvelopeFile> = emptyList(),
         /** a8s envelope `id` (ULID). Used for idempotent SMS-style commands. */
         val envelopeId: String = "",
+        /** When set, command replies go to this number via SMS instead of MQTT. */
+        val smsReplyTo: String? = null,
     ) : MqttRoute()
     data class NotACommand(val sender: String) : MqttRoute()
     data class Drop(val reason: String) : MqttRoute()

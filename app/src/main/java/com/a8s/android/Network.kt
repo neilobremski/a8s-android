@@ -112,6 +112,16 @@ object Network {
         }
     }
 
+    private val SMS_COMMAND_RESERVED = setOf("tell_prefix")
+
+    /** Optional `sms_command` block — currently only `tell_prefix` (default `text`). */
+    fun parseTellPrefix(root: JSONObject): String {
+        val obj = root.optJSONObject("sms_command") ?: return PhoneNormalize.DEFAULT_TELL_PREFIX
+        val prefix = obj.optString("tell_prefix", PhoneNormalize.DEFAULT_TELL_PREFIX).trim()
+        rejectUnknownKeys(obj, SMS_COMMAND_RESERVED)
+        return prefix.ifEmpty { PhoneNormalize.DEFAULT_TELL_PREFIX }
+    }
+
     private fun rejectUnknownKeys(spec: JSONObject, allowed: Set<String>) {
         val keys = spec.keys()
         val unknown = mutableListOf<String>()

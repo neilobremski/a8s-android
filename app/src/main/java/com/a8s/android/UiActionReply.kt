@@ -25,13 +25,13 @@ internal object UiActionReply {
     fun send(
         service: A8sService,
         config: A8sAndroid.Config,
-        sender: String,
+        cmd: MqttRoute.Command,
         body: String,
         kind: String,
     ) {
         if (!service.hasProjectionConsent()) {
             service.replyToSender(
-                config, sender,
+                config, cmd,
                 "$body (no screen-capture consent — re-grant via Grant All Permissions to attach a verification screenshot)",
             )
             return
@@ -39,9 +39,9 @@ internal object UiActionReply {
         val dest = File(File(service.cacheDir, "ui-actions"), "$kind-${System.currentTimeMillis()}.png")
         val captured = service.captureScreenshotPng(dest)
         if (captured) {
-            service.replyToSender(config, sender, body, files = listOf(dest))
+            service.replyToSender(config, cmd, body, files = listOf(dest))
         } else {
-            service.replyToSender(config, sender, "$body (post-action screenshot capture failed)")
+            service.replyToSender(config, cmd, "$body (post-action screenshot capture failed)")
         }
     }
 }

@@ -156,4 +156,23 @@ class NetworkTest {
         """.trimIndent())
         assertThrows(IllegalArgumentException::class.java) { Network.parseServices(json) }
     }
+
+    // ---------- parseTellPrefix ----------
+
+    @Test
+    fun `parseTellPrefix defaults to text when block absent`() {
+        assertEquals("text", Network.parseTellPrefix(JSONObject("{ }")))
+    }
+
+    @Test
+    fun `parseTellPrefix reads sms_command tell_prefix`() {
+        val json = JSONObject("""{"sms_command":{"tell_prefix":"sms"}}""")
+        assertEquals("sms", Network.parseTellPrefix(json))
+    }
+
+    @Test
+    fun `parseTellPrefix rejects unknown sms_command keys`() {
+        val json = JSONObject("""{"sms_command":{"tell_prefix":"text","extra":1}}""")
+        assertThrows(IllegalArgumentException::class.java) { Network.parseTellPrefix(json) }
+    }
 }

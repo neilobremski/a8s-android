@@ -9,7 +9,7 @@ object CmdDownload {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val parts = CmdHelpers.parseDownloadArgs(cmd.args)
         if (parts == null) {
-            service.replyToSender(config, cmd.sender, "usage: /download <url> [filename]")
+            service.replyToSender(config, cmd, "usage: /download <url> [filename]")
             return
         }
 
@@ -35,11 +35,11 @@ object CmdDownload {
         }
 
         if (downloaded) {
-            service.replyToSender(config, cmd.sender,
+            service.replyToSender(config, cmd,
                 "Downloaded to ${dest.absolutePath} (${CmdHelpers.humanSize(dest.length())})")
         } else {
             dest.delete()
-            service.replyToSender(config, cmd.sender,
+            service.replyToSender(config, cmd,
                 "Download failed: could not retrieve ${parts.url}")
         }
     }

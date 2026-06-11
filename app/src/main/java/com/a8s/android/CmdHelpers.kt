@@ -267,7 +267,16 @@ object CmdHelpers {
     }
 
     private fun normalizePhone(number: String): String =
-        number.replace(Regex("[^0-9+]"), "")
+        PhoneNormalize.normalizePhoneDigits(number)
+
+    // ── /tell ─────────────────────────────────────────────────────────────
+
+    data class TellParts(val agent: String, val message: String)
+
+    fun parseTellArgs(args: List<String>): TellParts? {
+        if (args.size < 2) return null
+        return TellParts(args[0], args.drop(1).joinToString(" "))
+    }
 
     // ── /<unknown> ───────────────────────────────────────────────────────
 
@@ -278,6 +287,7 @@ object CmdHelpers {
         "/send <number> <message>",
         "/mms <number> <url>",
         "/reply <number> <text>",
+        "/tell <agent> <message>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",

@@ -22,7 +22,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
-import android.provider.ContactsContract
 import android.telephony.SmsManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -44,46 +43,6 @@ class A8sService : LifecycleService() {
 
         var instance: A8sService? = null
             private set
-
-        // Verb -> handler map. The handler receives the live service so
-        // it can call `replyToSender` and reach the cached MediaProjection
-        // consent. Keeping the dispatch as a map (rather than a `when` in
-        // executeCommand) keeps the cyclomatic complexity below detekt's
-        // ceiling as new verbs land.
-        private val asyncCommands: Map<String, (A8sService, A8sAndroid.Config, MqttRoute.Command) -> Unit> = mapOf(
-            "update" to { s, c, k -> s.runUpdateCommand(c, k) },
-            "screenshot" to { s, c, k -> s.runScreenshotCommand(c, k) },
-            "photo" to { s, c, k -> CmdPhoto.run(s, c, k) },
-            "video" to { s, c, k -> CmdVideo.run(s, c, k) },
-            "audio" to { s, c, k -> CmdAudio.run(s, c, k) },
-            "location" to { s, c, k -> CmdLocation.run(s, c, k) },
-            "say" to { s, c, k -> CmdSay.run(s, c, k) },
-            "notify" to { s, c, k -> CmdNotify.run(s, c, k) },
-            "ls" to { s, c, k -> CmdLs.run(s, c, k) },
-            "cat" to { s, c, k -> CmdCat.run(s, c, k) },
-            "rm" to { s, c, k -> CmdRm.run(s, c, k) },
-            "tap" to { s, c, k -> CmdTap.run(s, c, k) },
-            "longtap" to { s, c, k -> CmdLongtap.run(s, c, k) },
-            "swipe" to { s, c, k -> CmdSwipe.run(s, c, k) },
-            "key" to { s, c, k -> CmdKey.run(s, c, k) },
-            "input" to { s, c, k -> CmdInput.run(s, c, k) },
-            "find" to { s, c, k -> CmdFind.run(s, c, k) },
-            "macro" to { s, c, k -> CmdMacro.run(s, c, k) },
-            "send" to { s, c, k ->
-                val parts = CmdHelpers.parseSendArgs(k.args)
-                if (parts == null) {
-                    s.replyToSender(c, k.sender, "usage: /send <number> <message>")
-                } else {
-                    val body = CmdHelpers.buildSendBody(parts.body, k.files)
-                    s.sendSms(parts.number, body)
-                    s.replyToSender(c, k.sender, "SMS queued to ${parts.number}: ${s.preview(body)}")
-                }
-            },
-            "mms" to { s, c, k -> CmdMms.run(s, c, k) },
-            "reply" to { s, c, k -> CmdReply.run(s, c, k) },
-            "download" to { s, c, k -> CmdDownload.run(s, c, k) },
-            "dashboard" to { s, c, k -> CmdDashboard.run(s, c, k) },
-        )
     }
 
     private val smsRequestSeq = java.util.concurrent.atomic.AtomicInteger(0)
@@ -98,7 +57,7 @@ class A8sService : LifecycleService() {
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var wifiLock: WifiManager.WifiLock
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private val publishDedup = PublishDedup()
+    internal val publishDedup = PublishDedup()
     private val retryQueue = PublishRetryQueue(
         scheduler = { delayMs, runnable -> handler.postDelayed(runnable, delayMs) },
     )
@@ -111,8 +70,10 @@ class A8sService : LifecycleService() {
     // raw resultCode + Intent rather than the live MediaProjection so
     // each /screenshot can build a fresh projection (Android revokes the
     // projection after a single capture in some configurations).
-    private var projectionResultCode: Int = 0
-    private var projectionData: Intent? = null
+    internal var projectionResultCode: Int = 0
+        private set
+    internal var projectionData: Intent? = null
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -156,7 +117,7 @@ class A8sService : LifecycleService() {
     private fun checkForUpdate() {
         Thread {
             try {
-                val installed = installedVersionName()
+                val installed = CmdUpdate.installedVersionName(this@A8sService)
                 val latest = Updater.fetchLatestRelease()
                 if (Updater.compareVersions(installed, latest.versionName) >= 0) {
                     A8sAndroid.log("Update check: up to date (v$installed)")
@@ -165,7 +126,7 @@ class A8sService : LifecycleService() {
                     val dest = File(File(cacheDir, "updates"), latest.apkName)
                     Updater.downloadTo(latest.apkUrl, dest)
                     A8sAndroid.log("Update check: downloaded ${Updater.humanSize(dest.length())}, triggering install")
-                    triggerInstallPrompt(dest)
+                    CmdUpdate.triggerInstallPrompt(this@A8sService, dest)
                 }
             } catch (e: Exception) {
                 A8sAndroid.log("Update check: failed (${e.message})")
@@ -317,6 +278,10 @@ class A8sService : LifecycleService() {
 
     private fun handleMqttMessage(payload: String) {
         val config = A8sAndroid.config ?: return
+        SubIdentityRoute.tryForward(payload, config)?.let { forward ->
+            SmsCommandDelivery.forwardToSms(this, config, forward)
+            return
+        }
         when (val route = decideRoute(payload, config)) {
             is MqttRoute.NotACommand -> {
                 val reply = "error: message must start with a /command\n" +
@@ -338,12 +303,12 @@ class A8sService : LifecycleService() {
         return if (flat.length <= max) flat else "${flat.take(max)}…"
     }
 
-    private fun executeCommand(cmd: MqttRoute.Command) {
+    internal fun executeCommand(cmd: MqttRoute.Command) {
         val config = A8sAndroid.config ?: return
         // Anything that does camera, network, or potentially-slow IO runs
         // on a fresh worker thread so paho's network thread isn't blocked;
         // the reply lands whenever the handler finishes.
-        val async = asyncCommands[cmd.name]
+        val async = AsyncCommands.handlers[cmd.name]
         if (async != null) {
             Thread { async(this, config, cmd) }.start()
             return
@@ -358,7 +323,40 @@ class A8sService : LifecycleService() {
             "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
             else -> Commands.renderUnknown(cmd.name)
         }
-        publishToSender(config, cmd.sender, reply)
+        replyToSender(config, cmd, reply)
+    }
+
+    /** Publish a raw a8s envelope (e.g. `/tell` sub-identity). */
+    fun publishEnvelope(
+        from: String,
+        to: String,
+        content: String,
+        files: org.json.JSONArray = org.json.JSONArray(),
+    ): Pair<Int, Int> {
+        val config = A8sAndroid.config ?: return 0 to 0
+        val payload = JSONObject().apply {
+            put("id", Ulid.new())
+            put("date", EnvelopeTime.isoNowUtc())
+            put("from", from)
+            put("to", to)
+            put("content", content)
+            put("files", files)
+        }.toString()
+        return publishToAllRemotes(config, payload)
+    }
+
+    internal fun buildFilesArrayForSms(
+        config: A8sAndroid.Config,
+        files: List<File>,
+    ): org.json.JSONArray = buildFilesArray(config, files)
+
+    fun replyToSender(
+        config: A8sAndroid.Config,
+        cmd: MqttRoute.Command,
+        body: String,
+        files: List<File> = emptyList(),
+    ) {
+        replyToSender(config, cmd.sender, body, files, cmd.smsReplyTo)
     }
 
     /**
@@ -371,7 +369,16 @@ class A8sService : LifecycleService() {
         sender: String,
         body: String,
         files: List<File> = emptyList(),
+        smsReplyTo: String? = null,
     ) {
+        if (!smsReplyTo.isNullOrBlank()) {
+            val smsBody = SmsCommandDelivery.smsBodyWithUploads(this, config, body, files)
+            sendSms(smsReplyTo, smsBody)
+            A8sAndroid.log(
+                "CMD -> SMS $smsReplyTo (${smsBody.length} chars, ${files.size} file(s))",
+            )
+            return
+        }
         publishToSender(config, sender, body, files)
     }
 
@@ -425,114 +432,6 @@ class A8sService : LifecycleService() {
         }
     }
 
-    private fun runScreenshotCommand(config: A8sAndroid.Config, cmd: MqttRoute.Command) {
-        val data = projectionData
-        if (data == null || projectionResultCode == 0) {
-            publishToSender(
-                config, cmd.sender,
-                "Screen capture not authorized — consent is held in-memory and " +
-                    "is lost on app/process restart (e.g. after /update reinstall). " +
-                    "Open the app and tap \"Grant All Permissions\" (or " +
-                    "\"Enable Screen Capture (for /screenshot)\") to re-grant.",
-            )
-            return
-        }
-        if (config.services.isEmpty()) {
-            publishToSender(
-                config, cmd.sender,
-                "Cannot send screenshot: no storage service configured. " +
-                    "Add a `services` entry to a8s.json (e.g. tempfile_org).",
-            )
-            return
-        }
-        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        var projection: MediaProjection? = null
-        try {
-            projection = mgr.getMediaProjection(projectionResultCode, data)
-            if (projection == null) {
-                publishToSender(config, cmd.sender, "Screen capture failed: projection unavailable")
-                return
-            }
-            val dest = File(File(cacheDir, "screenshots"), "screenshot-${System.currentTimeMillis()}.png")
-            val captured = Screenshot(this, projection).capture(dest)
-            if (!captured) {
-                publishToSender(config, cmd.sender, "Screen capture failed: timed out waiting for frame")
-                return
-            }
-            A8sAndroid.log("Screenshot captured: ${dest.length()} bytes")
-            publishToSender(
-                config, cmd.sender,
-                "Screenshot (${dest.length()} bytes)",
-                files = listOf(dest),
-            )
-        } catch (e: Exception) {
-            A8sAndroid.log("Screenshot failed: ${e.message}")
-            publishToSender(config, cmd.sender, "Screenshot failed: ${e.message}")
-        } finally {
-            try { projection?.stop() } catch (_: Exception) { }
-        }
-    }
-
-    private fun runUpdateCommand(config: A8sAndroid.Config, cmd: MqttRoute.Command) {
-        val checkOnly = cmd.args.any { it == "--check" || it == "-c" }
-        val explicitUrl = cmd.args.firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
-        try {
-            val installedVersion = installedVersionName()
-            if (checkOnly) {
-                val latest = Updater.fetchLatestRelease()
-                publishToSender(config, cmd.sender, Updater.renderCheck(installedVersion, latest))
-                return
-            }
-            val (downloadUrl, fileName) = if (explicitUrl != null) {
-                Pair(explicitUrl, "explicit-${System.currentTimeMillis()}.apk")
-            } else {
-                val latest = Updater.fetchLatestRelease()
-                if (Updater.compareVersions(installedVersion, latest.versionName) >= 0) {
-                    publishToSender(
-                        config, cmd.sender,
-                        "Already up to date (installed v$installedVersion, latest ${latest.tagName}). " +
-                            "Use /update <url> to force a specific build.",
-                    )
-                    return
-                }
-                publishToSender(
-                    config, cmd.sender,
-                    "Update available: v$installedVersion → ${latest.tagName} " +
-                        "(${Updater.humanSize(latest.sizeBytes)}). Downloading…",
-                )
-                Pair(latest.apkUrl, latest.apkName)
-            }
-            val dest = File(File(cacheDir, "updates"), fileName)
-            Updater.downloadTo(downloadUrl, dest)
-            A8sAndroid.log("Update downloaded to ${dest.absolutePath} (${dest.length()} bytes)")
-            triggerInstallPrompt(dest)
-            publishToSender(
-                config, cmd.sender,
-                "Downloaded ${Updater.humanSize(dest.length())}. Install dialog launched on phone — " +
-                    "tap Install on the device to apply.",
-            )
-        } catch (e: Exception) {
-            A8sAndroid.log("Update failed: ${e.message}")
-            publishToSender(config, cmd.sender, "Update failed: ${e.message}")
-        }
-    }
-
-    private fun installedVersionName(): String = try {
-        packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
-    } catch (e: Exception) {
-        "?"
-    }
-
-    private fun triggerInstallPrompt(apk: File) {
-        val authority = "$packageName.fileprovider"
-        val uri = androidx.core.content.FileProvider.getUriForFile(this, authority, apk)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        startActivity(intent)
-    }
-
     /** Used by `InfoSnapshotter.capture` to read live MQTT connection
      *  state without exposing the `mqttClients` map. */
     fun remoteStatuses(config: A8sAndroid.Config): List<Commands.RemoteStatus> =
@@ -558,7 +457,7 @@ class A8sService : LifecycleService() {
         val filesArr = buildFilesArray(config, files)
         val payload = JSONObject().apply {
             put("id", Ulid.new())
-            put("date", isoNowUtc())
+            put("date", EnvelopeTime.isoNowUtc())
             put("from", config.device)
             put("to", sender)
             put("content", body)
@@ -577,7 +476,7 @@ class A8sService : LifecycleService() {
      * `storage` array if all services failed (caller's already logged
      * the per-service failure).
      */
-    private fun buildFilesArray(
+    internal fun buildFilesArray(
         config: A8sAndroid.Config,
         files: List<File>,
     ): org.json.JSONArray {
@@ -620,7 +519,7 @@ class A8sService : LifecycleService() {
         return false
     }
 
-    private fun publishToAllRemotes(config: A8sAndroid.Config, payload: String): Pair<Int, Int> {
+    internal fun publishToAllRemotes(config: A8sAndroid.Config, payload: String): Pair<Int, Int> {
         var ok = 0
         var fail = 0
         val bytes = payload.toByteArray()
@@ -689,124 +588,7 @@ class A8sService : LifecycleService() {
         mediaFiles: List<File> = emptyList(),
         replyAction: android.app.Notification.Action? = null,
     ) {
-        val config = A8sAndroid.config ?: return
-
-        // SMS gives us the raw phone number directly. RCS notifications give
-        // us the contact's display name (e.g. "Neil C. Obremski"). Try the
-        // phonebook with the input as-is first; if no match, look up the
-        // contact in ContactsContract to resolve display name → phone, then
-        // re-try the phonebook lookup.
-        val direct = fromIdentity.replace("[^0-9+]".toRegex(), "")
-        val phonebookNames = if (direct.isNotEmpty()) {
-            config.phonebook.filterValues { it.replace("[^0-9+]".toRegex(), "") == direct }.keys
-        } else {
-            emptySet()
-        }
-        val resolvedNumber: String
-        val matchedNames = if (phonebookNames.isNotEmpty()) {
-            resolvedNumber = direct
-            phonebookNames
-        } else {
-            val resolved = phoneNumberForDisplayName(fromIdentity)
-                ?.replace("[^0-9+]".toRegex(), "")
-            if (resolved.isNullOrEmpty()) {
-                A8sAndroid.log("Ignored incoming from $fromIdentity (no phone number resolved)")
-                return
-            }
-            resolvedNumber = resolved
-            val byContact = config.phonebook.filterValues {
-                it.replace("[^0-9+]".toRegex(), "") == resolved
-            }.keys
-            if (byContact.isEmpty()) {
-                A8sAndroid.log("Ignored incoming from $fromIdentity (resolved to $resolved, not in phonebook)")
-                return
-            }
-            byContact
-        }
-
-        // Cache reply action keyed by phone number for /reply command
-        if (replyAction != null && resolvedNumber.isNotEmpty()) {
-            A8sAndroid.cacheReplyAction(resolvedNumber, replyAction)
-        }
-
-        // Reply destined for the cluster participant whose number we
-        // matched. The phone is acting as the device participant
-        // (config.device); the cluster sees the message as coming from
-        // it. One envelope per matched name (rare, but a phonebook can
-        // have aliases).
-        if (mediaFiles.isNotEmpty()) {
-            // Upload once, then publish the same URLs to each matched name
-            Thread {
-                val filesArr = buildFilesArray(config, mediaFiles)
-                matchedNames.forEach { name ->
-                    if (!publishDedup.shouldPublish("$name|$body")) {
-                        A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
-                        return@forEach
-                    }
-                    val payload = buildIncomingPayload(config, name, body, filesArr)
-                    val (ok, fail) = publishToAllRemotes(config, payload)
-                    A8sAndroid.log(
-                        "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
-                            "[+${mediaFiles.size} file(s)] (${ok}/${ok + fail} remotes)",
-                    )
-                }
-                mediaFiles.forEach { it.delete() }
-            }.start()
-        } else {
-            matchedNames.forEach { name ->
-                if (!publishDedup.shouldPublish("$name|$body")) {
-                    A8sAndroid.log("Skipping duplicate to $name (already sent recently)")
-                    return@forEach
-                }
-                val payload = buildIncomingPayload(config, name, body, org.json.JSONArray())
-                val (ok, fail) = publishToAllRemotes(config, payload)
-                A8sAndroid.log(
-                    "SMS -> MQTT ${config.device} -> $name: ${preview(body)} " +
-                        "(${ok}/${ok + fail} remotes)",
-                )
-            }
-        }
-    }
-
-    private fun buildIncomingPayload(
-        config: A8sAndroid.Config,
-        toName: String,
-        body: String,
-        filesArr: org.json.JSONArray,
-    ): String = JSONObject().apply {
-        put("id", Ulid.new())
-        put("date", isoNowUtc())
-        put("from", config.device)
-        put("to", toName)
-        put("content", body)
-        put("files", filesArr)
-    }.toString()
-
-    private fun isoNowUtc(): String {
-        // 2026-05-02T01:23:45Z — same shape as Python a8s envelopes.
-        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
-        sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
-        return sdf.format(java.util.Date())
-    }
-
-    private fun phoneNumberForDisplayName(name: String): String? {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
-            != PackageManager.PERMISSION_GRANTED) {
-            A8sAndroid.log("Cannot resolve $name: READ_CONTACTS not granted")
-            return null
-        }
-        return try {
-            contentResolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-                "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} = ?",
-                arrayOf(name),
-                null
-            )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-        } catch (e: Exception) {
-            A8sAndroid.log("Contacts lookup failed for $name: ${e.message}")
-            null
-        }
+        IncomingSmsRouter.publishIncoming(this, fromIdentity, body, mediaFiles, replyAction)
     }
 
     private fun registerNetworkCallback() {

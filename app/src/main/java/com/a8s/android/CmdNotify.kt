@@ -24,7 +24,7 @@ object CmdNotify {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val parts = CmdHelpers.parseNotifyArgs(cmd.args)
         if (parts == null) {
-            service.replyToSender(config, cmd.sender, "Usage: /notify <title>|<body>")
+            service.replyToSender(config, cmd, "Usage: /notify <title>|<body>")
             return
         }
         val context: Context = service
@@ -42,12 +42,12 @@ object CmdNotify {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.notify(id, notif)
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "Posted notification #$id: ${parts.title} | ${parts.body}",
             )
         } catch (e: Exception) {
             A8sAndroid.log("Notify failed: ${e.message}")
-            service.replyToSender(config, cmd.sender, "Notify failed: ${e.message}")
+            service.replyToSender(config, cmd, "Notify failed: ${e.message}")
         }
     }
 

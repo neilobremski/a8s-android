@@ -28,7 +28,7 @@ object CmdLocation {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         if (!hasLocationPerm(service)) {
             service.replyToSender(
-                config, cmd.sender,
+                config, cmd,
                 "Location failed: ACCESS_FINE_LOCATION not granted (open the app and tap Grant All)",
             )
             return
@@ -36,14 +36,14 @@ object CmdLocation {
         val context: Context = service
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         if (lm == null) {
-            service.replyToSender(config, cmd.sender, "Location failed: LocationManager unavailable")
+            service.replyToSender(config, cmd, "Location failed: LocationManager unavailable")
             return
         }
 
         val fused = tryFused(context)
         val location = fused ?: requestFromManager(lm)
         if (location == null) {
-            service.replyToSender(config, cmd.sender, "Location failed: no fix within ${ONE_SHOT_TIMEOUT_S}s")
+            service.replyToSender(config, cmd, "Location failed: no fix within ${ONE_SHOT_TIMEOUT_S}s")
             return
         }
         val snap = CmdHelpers.LocationSnapshot(
@@ -53,7 +53,7 @@ object CmdLocation {
             ageMs = (System.currentTimeMillis() - location.time).coerceAtLeast(0),
             provider = location.provider ?: "fused",
         )
-        service.replyToSender(config, cmd.sender, CmdHelpers.renderLocation(snap))
+        service.replyToSender(config, cmd, CmdHelpers.renderLocation(snap))
     }
 
     private fun hasLocationPerm(context: Context): Boolean =
