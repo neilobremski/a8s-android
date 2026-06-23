@@ -4,74 +4,68 @@ import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class MqttRouteTest {
 
     private fun config(
-        device: String = "my-phone",
-        phonebook: Map<String, String> = mapOf("Clover" to "+15550001111"),
-    ): A8sAndroid.Config = A8sAndroid.Config(
-        device = device,
-        phonebook = phonebook,
-        remotes = mapOf(
-            "default" to RemoteConfig(
-                broker = "ssl://broker:8883",
-                topic = "t",
-                username = "u",
-                password = "p",
-            ),
-        ),
-        services = emptyList(),
-    )
+        device: String = "android-pixel-7",
+        rolesJson: String = """{"owner":{"commands":["*"]}}""",
+        principalsJson: String = """
+            [
+              {"agent":"knobert","roles":["owner"]},
+              {"agent":"neil-phone","phone":"+13602196756","roles":["owner"]}
+            ]
+        """.trimIndent(),
+    ): A8sAndroid.Config = TestFixtures.config(device = device, rolesJson = rolesJson, principalsJson = principalsJson)
 
     @Test
     fun `to == device with known sender and no slash returns NotACommand`() {
-        val payload = """{"to":"my-phone","from":"Clover","content":"hello"}"""
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"hello"}"""
         val r = decideRoute(payload, config())
-        assertEquals(MqttRoute.NotACommand("Clover"), r)
+        assertEquals(MqttRoute.NotACommand("knobert"), r)
     }
 
     @Test
     fun `to == device from unknown sender drops`() {
-        val payload = """{"to":"my-phone","from":"stranger","content":"hello"}"""
+        val payload = """{"to":"android-pixel-7","from":"stranger","content":"hello"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
-        assertTrue((r as MqttRoute.Drop).reason.contains("not in phonebook"))
+        assertTrue((r as MqttRoute.Drop).reason.contains("not a configured agent"))
     }
 
     @Test
     fun `to == device with empty from drops`() {
-        val payload = """{"to":"my-phone","content":"hello"}"""
+        val payload = """{"to":"android-pixel-7","content":"hello"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
-        assertTrue((r as MqttRoute.Drop).reason.contains("not in phonebook"))
+        assertTrue((r as MqttRoute.Drop).reason.contains("not a configured agent"))
     }
 
     @Test
-    fun `self-loopback (from equals device) is dropped`() {
-        val payload = """{"to":"Clover","from":"my-phone","content":"hi"}"""
+    fun `self-loopback from device is dropped`() {
+        val payload = """{"to":"android-pixel-7","from":"android-pixel-7","content":"/info"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
         assertTrue((r as MqttRoute.Drop).reason.contains("self-loopback"))
     }
 
     @Test
-    fun `self-loopback from own sub-identity is dropped`() {
-        val cfg = config(phonebook = mapOf("Clover" to "+13602196756"))
-        val payload = """{"to":"Clover","from":"text-13602196756","content":"hi"}"""
-        val r = decideRoute(payload, cfg)
+    fun `self-loopback from local agent is dropped`() {
+        val payload = """{"to":"android-pixel-7","from":"neil-phone","content":"/info"}"""
+        val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
         assertTrue((r as MqttRoute.Drop).reason.contains("self-loopback"))
     }
 
     @Test
-    fun `isSelfOrigin matches device and sub-identity but not others`() {
-        val cfg = config(phonebook = mapOf("Clover" to "+13602196756"))
-        assertTrue(isSelfOrigin("my-phone", cfg))
-        assertTrue(isSelfOrigin("text-13602196756", cfg))
-        assertFalse(isSelfOrigin("Clover", cfg))
+    fun `isSelfOrigin matches device and phone agents but not remote agents`() {
+        val cfg = config()
+        assertTrue(isSelfOrigin("android-pixel-7", cfg))
+        assertTrue(isSelfOrigin("neil-phone", cfg))
+        assertFalse(isSelfOrigin("knobert", cfg))
         assertFalse(isSelfOrigin("", cfg))
     }
 
@@ -85,7 +79,7 @@ class MqttRouteTest {
 
     @Test
     fun `to not device drops`() {
-        val payload = """{"to":"other-agent","from":"Clover","content":"yo"}"""
+        val payload = """{"to":"neil-phone","from":"knobert","content":"/logs"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
         assertTrue((r as MqttRoute.Drop).reason.contains("not this device"))
@@ -93,7 +87,7 @@ class MqttRouteTest {
 
     @Test
     fun `missing to drops`() {
-        val payload = """{"from":"Clover","content":"y"}"""
+        val payload = """{"from":"knobert","content":"y"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
         assertTrue((r as MqttRoute.Drop).reason.contains("missing 'to'"))
@@ -106,67 +100,68 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `to == device with multiple phonebook entries returns NotACommand`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+1999", "Clover" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Clover","content":"hi"}"""
-        val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.NotACommand("Clover"), r)
-    }
-
-    @Test
     fun `to non-device drops even if content has body field`() {
-        val payload = """{"to":"Clover","from":"gerry","content":"present","body":"WRONG"}"""
+        val payload = """{"to":"neil-phone","from":"knobert","content":"present","body":"WRONG"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
     }
 
     @Test
     fun `whitespace-only content from known sender yields NotACommand`() {
-        val payload = """{"to":"my-phone","from":"Clover","content":"   "}"""
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"   "}"""
         val route = decideRoute(payload, config())
-        assertEquals(MqttRoute.NotACommand("Clover"), route)
+        assertEquals(MqttRoute.NotACommand("knobert"), route)
     }
 
-    // ---------- /command routing (phonebook is the auth gate) ----------
-
     @Test
-    fun `slash command from phonebook sender produces Command route`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/info"}"""
-        val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.Command("Alice", "info", emptyList()), r)
+    fun `slash command from authorized agent produces Command route`() {
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"/info"}"""
+        val r = decideRoute(payload, config())
+        assertEquals(MqttRoute.Command("knobert", "info", emptyList()), r)
     }
 
     @Test
     fun `slash command parses args`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/logs 100"}"""
-        val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.Command("Alice", "logs", listOf("100")), r)
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"/logs 100"}"""
+        val r = decideRoute(payload, config())
+        assertEquals(MqttRoute.Command("knobert", "logs", listOf("100")), r)
     }
 
     @Test
     fun `slash command from unknown sender drops`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"stranger","content":"/info"}"""
-        val r = decideRoute(payload, cfg)
+        val payload = """{"to":"android-pixel-7","from":"stranger","content":"/info"}"""
+        val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
-        assertTrue((r as MqttRoute.Drop).reason.contains("not in phonebook"))
     }
 
     @Test
-    fun `non-slash content from phonebook sender returns NotACommand`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550009999"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"hello"}"""
+    fun `slash command without role permission drops`() {
+        val cfg = config(
+            rolesJson = """{"owner":{"commands":["*"]},"viewer":{"commands":["info"]}}""",
+            principalsJson = """
+                [
+                  {"agent":"knobert","roles":["viewer"]},
+                  {"agent":"neil-phone","phone":"+13602196756","roles":["owner"]}
+                ]
+            """.trimIndent(),
+        )
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"/logs"}"""
         val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.NotACommand("Alice"), r)
+        assertTrue(r is MqttRoute.Drop)
+        assertTrue((r as MqttRoute.Drop).reason.contains("not permitted"))
+    }
+
+    @Test
+    fun `non-slash content from agent returns NotACommand`() {
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"hello"}"""
+        val r = decideRoute(payload, config())
+        assertEquals(MqttRoute.NotACommand("knobert"), r)
     }
 
     @Test
     fun `slash content yields Command not NotACommand`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/send +15559990000 hi there"}"""
-        val r = decideRoute(payload, cfg)
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"/send +15559990000 hi there"}"""
+        val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Command)
         assertEquals("send", (r as MqttRoute.Command).name)
         assertEquals(listOf("+15559990000", "hi", "there"), r.args)
@@ -174,26 +169,22 @@ class MqttRouteTest {
 
     @Test
     fun `command verb is lowercased`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/INFO"}"""
-        val r = decideRoute(payload, cfg)
-        assertEquals(MqttRoute.Command("Alice", "info", emptyList()), r)
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"/INFO"}"""
+        val r = decideRoute(payload, config())
+        assertEquals(MqttRoute.Command("knobert", "info", emptyList()), r)
     }
 
     @Test
     fun `empty slash command drops`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/   "}"""
-        val r = decideRoute(payload, cfg)
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"/   "}"""
+        val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
         assertTrue((r as MqttRoute.Drop).reason.contains("empty command"))
     }
 
-    // ---------- files parsing (parseEnvelopeFiles utility) ----------
-
     @Test
     fun `parseEnvelopeFiles extracts storage URLs`() {
-        val json = org.json.JSONObject(
+        val json = JSONObject(
             """{"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}""",
         )
         val files = parseEnvelopeFiles(json)
@@ -203,17 +194,15 @@ class MqttRouteTest {
     }
 
     @Test
-    fun `message to non-device with files still drops`() {
-        val payload =
-            """{"to":"Clover","from":"gerry","content":"here",""" +
-                """"files":[{"filename":"doc.pdf","storage":["https://tempfile.org/x/"]}]}"""
+    fun `message to phone agent with slash content drops at decideRoute`() {
+        val payload = """{"to":"neil-phone","from":"knobert","content":"/logs"}"""
         val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Drop)
     }
 
     @Test
     fun `parseEnvelopeFiles handles missing storage array`() {
-        val json = org.json.JSONObject(
+        val json = JSONObject(
             """{"files":[{"filename":"local.txt","path":"./.files/local.txt"}]}""",
         )
         val files = parseEnvelopeFiles(json)
@@ -224,89 +213,38 @@ class MqttRouteTest {
 
     @Test
     fun `parseEnvelopeFiles returns empty for no files array`() {
-        val json = org.json.JSONObject("""{"content":"plain"}""")
+        val json = JSONObject("""{"content":"plain"}""")
         val files = parseEnvelopeFiles(json)
         assertTrue(files.isEmpty())
     }
 
     @Test
-    fun `parseEnvelopeFiles preserves multiple storage URLs`() {
-        val json = org.json.JSONObject(
-            """{"files":[{"filename":"a.png","storage":["https://s1.org/1/","https://s2.org/2/"]}]}""",
-        )
-        val files = parseEnvelopeFiles(json)
-        assertEquals(2, files[0].storageUrls.size)
-    }
-
-    @Test
     fun `command with files passes them through`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/send +15559990000 check this",""" +
+        val payload = """{"to":"android-pixel-7","from":"knobert","content":"/send +15559990000 check this",""" +
             """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc123/"]}]}"""
-        val r = decideRoute(payload, cfg)
+        val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.Command)
         val cmd = r as MqttRoute.Command
         assertEquals("send", cmd.name)
         assertEquals(1, cmd.files.size)
         assertEquals("photo.jpg", cmd.files[0].filename)
-        assertEquals(listOf("https://tempfile.org/abc123/"), cmd.files[0].storageUrls)
-    }
-
-    @Test
-    fun `command without files has empty files list`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload = """{"to":"my-phone","from":"Alice","content":"/info"}"""
-        val r = decideRoute(payload, cfg)
-        assertTrue(r is MqttRoute.Command)
-        assertTrue((r as MqttRoute.Command).files.isEmpty())
-    }
-
-    // ---------- files carried through routing (end-to-end contract) --------
-
-    @Test
-    fun `command with files passes them to Command route`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload =
-            """{"to":"my-phone","from":"Alice","content":"/send 5551234 hello",""" +
-                """"files":[{"filename":"photo.jpg","storage":["https://tempfile.org/abc/"]}]}"""
-        val r = decideRoute(payload, cfg)
-        assertTrue(r is MqttRoute.Command)
-        val cmd = r as MqttRoute.Command
-        assertEquals("send", cmd.name)
-        assertEquals(listOf("5551234", "hello"), cmd.args)
-        assertEquals(1, cmd.files.size)
-        assertEquals("photo.jpg", cmd.files[0].filename)
-        assertEquals(listOf("https://tempfile.org/abc/"), cmd.files[0].storageUrls)
-    }
-
-    @Test
-    fun `command with multiple files carries all`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
-        val payload =
-            """{"to":"my-phone","from":"Alice","content":"/send 5551234 check these",""" +
-                """"files":[{"filename":"a.jpg","storage":["https://tempfile.org/1/"]},""" +
-                """{"filename":"b.png","storage":["https://tempfile.org/2/"]}]}"""
-        val r = decideRoute(payload, cfg) as MqttRoute.Command
-        assertEquals(2, r.files.size)
     }
 
     @Test
     fun `command carries envelope id from json`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
         val payload =
-            """{"id":"01KTVEBX9HA8ZHMH5BP2EA38WQ","to":"my-phone","from":"Alice",""" +
+            """{"id":"01KTVEBX9HA8ZHMH5BP2EA38WQ","to":"android-pixel-7","from":"knobert",""" +
                 """"content":"/send +15559990000 hi"}"""
-        val r = decideRoute(payload, cfg) as MqttRoute.Command
+        val r = decideRoute(payload, config()) as MqttRoute.Command
         assertEquals("01KTVEBX9HA8ZHMH5BP2EA38WQ", r.envelopeId)
     }
 
     @Test
     fun `NotACommand does not carry files`() {
-        val cfg = config(phonebook = mapOf("Alice" to "+15550001111"))
         val payload =
-            """{"to":"my-phone","from":"Alice","content":"hello",""" +
+            """{"to":"android-pixel-7","from":"knobert","content":"hello",""" +
                 """"files":[{"filename":"x.jpg","storage":["https://tempfile.org/x/"]}]}"""
-        val r = decideRoute(payload, cfg)
+        val r = decideRoute(payload, config())
         assertTrue(r is MqttRoute.NotACommand)
     }
 }

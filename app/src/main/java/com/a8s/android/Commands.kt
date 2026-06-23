@@ -190,7 +190,7 @@ object Commands {
 
     private fun renderConfigLine(b: StringBuilder, s: InfoSnapshotter.InfoSnapshot) {
         b.append("Config: ")
-        b.append("phonebook=${s.phonebookSize}")
+        b.append("principals=${s.principalCount}")
         b.append("\n")
     }
 

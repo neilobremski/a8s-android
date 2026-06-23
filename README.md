@@ -5,7 +5,8 @@ A high-reliability messaging bridge for the [a8s (Agent Infinity System)](https:
 ## Features
 
 - **a8s Integration:** Operates as a remote node in an a8s cluster.
-- **Command-driven model:** Phonebook participants issue `/command` messages to the device; commands execute locally and reply over MQTT.
+- **Command-driven model:** Configured agents issue `/command` messages to the device node; commands execute locally and reply over MQTT.
+- **Phone-agent SMS bridge:** MQTT to a phone-backed agent (e.g. `neil-phone`) forwards opaque SMS — even `/logs` is not executed on the device.
 - **Explicit SMS sending:** `/send`, `/mms`, `/reply` — no implicit forwarding.
 - **SMS/RCS to MQTT:** Incoming SMS and intercepted RCS notifications publish back to the cluster.
 - **Media receive:** Extracts images/video from RCS notifications (3 strategies) and MMS via ContentObserver.
@@ -22,11 +23,15 @@ The app is configured via a JSON file with the following schema:
 ```json
 {
   "device": "android-pixel-7",
-  "phonebook": {
-    "Neil": "+15550009999",
-    "Clover": "+15550001111",
-    "Gerry": "+15550002222"
+  "roles": {
+    "owner": { "commands": ["*"] }
   },
+  "principals": [
+    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"] },
+    { "agent": "knobert", "roles": ["owner"] },
+    { "agent": "neil-macbook", "roles": ["owner"] }
+  ],
+  "routing": { "sms_inbound_agent": "knobert" },
   "remotes": {
     "hivemq": {
       "transport": "mqtt",
@@ -45,33 +50,31 @@ The app is configured via a JSON file with the following schema:
 }
 ```
 
-The legacy `1.9.0` shape (a flat `remote` object instead of `remotes`)
-still parses — it's wrapped as `remotes: { "default": ... }` so an
-in-place upgrade doesn't break. The pre-1.16.0 `forward` and `owner`
-keys are ignored (with a startup warning) — the phonebook is now the
-single auth gate.
+**Breaking change (1.29.0):** the `phonebook`, `owner`, `forward`,
+`sms_command`, and legacy `remote` keys are no longer accepted. Rewrite
+your config to the shape above.
 
-- **`device`** — the participant name this phone identifies as on the a8s
-  cluster. When other agents `tell <device> "..."`, the message arrives at
-  this phone.
-- **`phonebook`** — `name → phone-number` map. The single auth gate:
-  - **Slash commands**: a phonebook sender whose `content` starts with
-    `/` runs the command on-device; the reply is `tell`'d back to that
-    sender. There is no separate "owner" — phonebook membership *is* the
-    privilege. Non-phonebook senders are dropped.
-  - **Inbound SMS**: SMS from a known number publishes back to MQTT as
-    that name.
-  - **Non-command content**: messages to this device from a phonebook
-    sender that don't start with `/` produce a `NotACommand` route
-    (logged, not forwarded). There is no implicit SMS forwarding.
+- **`device`** — the Android node id on the cluster (e.g.
+  `android-pixel-7`). MQTT `to: <device>` runs slash commands on the
+  phone. Must **not** overlap any `principals[].agent` name.
+- **`roles`** — named command allow-lists. Each role has a `commands`
+  array; `"*"` grants every verb. An `owner` role is required.
+- **`principals`** — cluster agents this device knows about:
+  - **`agent`** — participant name (MQTT identity).
+  - **`phone`** *(optional)* — E.164 number when this device bridges
+    SMS for that agent. Principals without `phone` are MQTT-only.
+  - **`roles`** — which role(s) apply when authorizing that agent.
+- **`routing.sms_inbound_agent`** — where plain SMS from a phone
+  principal publishes on MQTT (`from: <phone-agent>`,
+  `to: <sms_inbound_agent>`). Must be a configured principal, not
+  `device`.
 - **`remotes`** — map of MQTT brokers this device subscribes/publishes to.
   Each entry is keyed by an arbitrary local name and contains
   `transport` (default `"mqtt"`), `broker`, `topic`, optional
-  `username`/`password` (also accepts `user`/`pass` aliases). Outbound
-  publishes fan out to every connected remote; inbound funnels through
-  one shared handler regardless of which remote delivered it. The host
-  cluster's a8s router dedups by ULID, so multi-remote delivery is
-  idempotent.
+  `username`/`password`. Outbound publishes fan out to every connected
+  remote; inbound funnels through one shared handler regardless of which
+  remote delivered it. The host cluster's a8s router dedups by ULID, so
+  multi-remote delivery is idempotent.
 - **`services`** *(optional)* — map of cross-cluster file-storage
   backends. Each entry has a `service` kind and a `url`. Currently the
   only supported kind is `tempfile_org` (https://tempfile.org;
@@ -80,14 +83,31 @@ single auth gate.
   Per-service options: `expiry_hours` (1, 6, 24, 48; default 24) and
   `timeout_s` (default 30).
 
-### Slash commands (phonebook-only)
+### Routing summary
 
-Any phonebook participant can send `tell <device> "/<command> [args]"`
-and the device executes it locally. Responses come back as
-`tell <sender> "..."` over MQTT. Senders not in the phonebook are dropped.
+| Path | Behavior |
+|------|----------|
+| MQTT `to: device`, `/verb`, authorized agent | Execute command on phone; reply MQTT |
+| MQTT `to: device`, non-command | Logged `NotACommand` (not forwarded) |
+| MQTT `to: <phone-agent>` | Opaque SMS to attached number (slash content **not** executed) |
+| SMS `/verb` from phone principal | Execute on phone; reply SMS |
+| SMS plain text from phone principal | MQTT `from: <phone-agent>` → `routing.sms_inbound_agent` |
+| SMS `/tell` from phone principal | MQTT envelope with `from: <phone-agent>` |
+
+### Slash commands (device + SMS)
+
+Cluster agents with a role permitting the verb can send
+`tell <device> "/<command> [args]"` and the device executes locally.
+Responses come back as `tell <sender> "..."` over MQTT.
+
+SMS from a phone principal works the same for permitted verbs; replies
+go back over SMS. Senders not in `principals`, or without role
+permission, are dropped (SMS gets a short rejection for disallowed
+verbs).
 
 | Command | Description |
 |---|---|
+| `/tell <agent> <message>` | Publish an a8s envelope over MQTT. SMS-originated `/tell` uses the phone principal as `from`. |
 | `/info` | App version, device model, Android release, MQTT state, network, battery, memory, storage, display, power, permissions, services, uptime, config. Add `verbose` (or `-v` / `--verbose`) for the full ~150-field dump (identifiers, Wi-Fi SSID/BSSID, IPs, sensors, last-known location, camera details, etc.). See `INFO_FIELD_RESEARCH.md` for the full field catalogue. |
 | `/logs [N]` | Last `N` lines of the in-app log buffer (default 50, max 500). |
 | `/send <number> <message>` | Send an SMS to an explicit phone number. |
@@ -141,10 +161,10 @@ One-time setup: in **Settings → Apps → a8s Android → Install unknown
 apps**, toggle **Allow from this source** on. Without it, the install
 dialog shows but the install is blocked.
 
-Phonebook membership is the only auth gate. A phonebook sender whose
-content starts with `/` runs a slash command; non-command content from
-a phonebook sender produces a `NotACommand` result (logged, not
-forwarded). Non-phonebook senders are dropped before any of this.
+Authorization is role-based: only configured principals whose roles
+include the verb may run commands (MQTT to `device`, or SMS from a
+phone principal). MQTT to a phone-backed agent always forwards opaque
+SMS regardless of content.
 
 ## Media receive
 

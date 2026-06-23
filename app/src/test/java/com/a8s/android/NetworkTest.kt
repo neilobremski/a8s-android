@@ -9,8 +9,6 @@ import org.junit.jupiter.api.Test
 
 class NetworkTest {
 
-    // ---------- parseRemotes — new map shape ----------
-
     @Test
     fun `parseRemotes reads map with multiple remotes`() {
         val json = JSONObject("""
@@ -52,41 +50,15 @@ class NetworkTest {
         assertEquals(listOf("alpha", "beta", "gamma"), keys)
     }
 
-    // ---------- parseRemotes — legacy singular ----------
-
     @Test
-    fun `parseRemotes accepts legacy singular remote and wraps as default`() {
-        // The 1.9.0 shape used a flat "remote" object with "url" instead
-        // of "broker". Both must keep working until users migrate.
+    fun `parseRemotes rejects legacy singular remote`() {
         val json = JSONObject("""
             {"remote": {
               "url": "ssl://legacy:8883",
-              "topic": "test-topic",
-              "username": "u",
-              "password": "p"
+              "topic": "test-topic"
             }}
         """.trimIndent())
-        val rs = Network.parseRemotes(json)
-        assertEquals(1, rs.size)
-        val r = rs["default"]!!
-        assertEquals("ssl://legacy:8883", r.broker)
-        assertEquals("test-topic", r.topic)
-        assertEquals("u", r.username)
-    }
-
-    @Test
-    fun `parseRemotes accepts user pass aliases`() {
-        val json = JSONObject("""
-            {"remotes":{"x":{"broker":"b","topic":"t","user":"alice","pass":"s3cret"}}}
-        """.trimIndent())
-        val r = Network.parseRemotes(json)["x"]!!
-        assertEquals("alice", r.username)
-        assertEquals("s3cret", r.password)
-    }
-
-    @Test
-    fun `parseRemotes empty when neither shape present`() {
-        assertEquals(0, Network.parseRemotes(JSONObject("{}")).size)
+        assertThrows(Exception::class.java) { Network.parseRemotes(json) }
     }
 
     @Test
@@ -96,8 +68,6 @@ class NetworkTest {
         """.trimIndent())
         assertThrows(IllegalArgumentException::class.java) { Network.parseRemotes(json) }
     }
-
-    // ---------- parseServices ----------
 
     @Test
     fun `parseServices empty when missing`() {
@@ -155,50 +125,5 @@ class NetworkTest {
             {"services":{"t":{"service":"tempfile_org","url":"https://t.org","frob":7}}}
         """.trimIndent())
         assertThrows(IllegalArgumentException::class.java) { Network.parseServices(json) }
-    }
-
-    // ---------- parseTellPrefix ----------
-
-    @Test
-    fun `parseTellPrefix defaults to text when block absent`() {
-        assertEquals("text", Network.parseTellPrefix(JSONObject("{ }")))
-    }
-
-    @Test
-    fun `parseTellPrefix reads sms_command tell_prefix`() {
-        val json = JSONObject("""{"sms_command":{"tell_prefix":"sms"}}""")
-        assertEquals("sms", Network.parseTellPrefix(json))
-    }
-
-    @Test
-    fun `parseTellPrefix rejects unknown sms_command keys`() {
-        val json = JSONObject("""{"sms_command":{"tell_prefix":"text","extra":1}}""")
-        assertThrows(IllegalArgumentException::class.java) { Network.parseTellPrefix(json) }
-    }
-
-    // ---------- parseSmsAllowedCommands ----------
-
-    @Test
-    fun `parseSmsAllowedCommands defaults to safe subset`() {
-        assertEquals(SmsCommandPolicy.DEFAULT_ALLOWED, Network.parseSmsAllowedCommands(JSONObject("{ }")))
-    }
-
-    @Test
-    fun `parseSmsAllowedCommands reads explicit list and strips slashes`() {
-        val json = JSONObject("""{"sms_command":{"allowed_commands":["/info","TELL","rm"]}}""")
-        assertEquals(setOf("info", "tell", "rm"), Network.parseSmsAllowedCommands(json))
-    }
-
-    @Test
-    fun `parseSmsAllowedCommands preserves wildcard`() {
-        val json = JSONObject("""{"sms_command":{"allowed_commands":["*"]}}""")
-        assertEquals(setOf("*"), Network.parseSmsAllowedCommands(json))
-    }
-
-    @Test
-    fun `parseSmsAllowedCommands allows tell_prefix alongside allowed_commands`() {
-        val json = JSONObject("""{"sms_command":{"tell_prefix":"sms","allowed_commands":["info"]}}""")
-        assertEquals("sms", Network.parseTellPrefix(json))
-        assertEquals(setOf("info"), Network.parseSmsAllowedCommands(json))
     }
 }

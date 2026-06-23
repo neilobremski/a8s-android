@@ -14,34 +14,19 @@ class FileDownloadRegressionTest {
     @TempDir
     lateinit var tempDir: File
 
-    private fun config(
-        device: String = "my-phone",
-        phonebook: Map<String, String> = mapOf("Clover" to "+15550001111"),
-    ): A8sAndroid.Config = A8sAndroid.Config(
-        device = device,
-        phonebook = phonebook,
-        remotes = mapOf(
-            "default" to RemoteConfig(
-                broker = "ssl://broker:8883",
-                topic = "t",
-                username = "u",
-                password = "p",
-            ),
-        ),
-        services = emptyList(),
-    )
+    private fun config(): A8sAndroid.Config = TestFixtures.config()
 
     @Test
     fun `non-command content returns NotACommand`() {
         val payload = JSONObject().apply {
-            put("to", "my-phone")
-            put("from", "Clover")
+            put("to", "android-pixel-7")
+            put("from", "knobert")
             put("content", "see attached")
         }.toString()
 
         val route = decideRoute(payload, config())
         assertTrue(route is MqttRoute.NotACommand)
-        assertEquals("Clover", (route as MqttRoute.NotACommand).sender)
+        assertEquals("knobert", (route as MqttRoute.NotACommand).sender)
     }
 
     @Test
@@ -66,7 +51,7 @@ class FileDownloadRegressionTest {
     @Test
     fun `message to non-device with files is dropped`() {
         val payload = JSONObject().apply {
-            put("to", "Clover")
+            put("to", "neil-phone")
             put("from", "gerry")
             put("content", "doc here")
             put("files", org.json.JSONArray().apply {

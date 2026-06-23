@@ -37,9 +37,7 @@ class A8sAndroid : Application() {
 
         fun getLogs(): String = synchronized(logs) { logs.joinToString("\n") }
 
-        // Cached notification reply actions for /reply command.
-        // Key: sender phone number (resolved during publishIncoming).
-        private const val REPLY_ACTION_TTL_MS = 30 * 60 * 1000L  // 30 minutes
+        private const val REPLY_ACTION_TTL_MS = 30 * 60 * 1000L
         private const val REPLY_ACTION_MAX_SIZE = 20
 
         data class CachedReply(
@@ -72,8 +70,6 @@ class A8sAndroid : Application() {
             return cached
         }
 
-        // Normalized lookup: strips non-digits and does suffix matching so that
-        // "3602196756" matches "+13602196756" (country code prefix mismatch).
         fun getReplyActionByDigits(digits: String): CachedReply? {
             val normalized = digits.replace(Regex("[^0-9]"), "")
             for ((key, value) in replyActions) {
@@ -136,52 +132,32 @@ class A8sAndroid : Application() {
         }
 
         private fun parseConfigJson(rawText: String): Config? {
-            val json = JSONObject(rawText)
-            val device = json.getString("device")
-            if (json.has("owner")) log("Config warning: 'owner' is no longer used (ignored)")
-            if (json.has("forward")) log("Config warning: 'forward' is no longer used (ignored)")
-            val phonebookMap = mutableMapOf<String, String>()
-            val phonebookJson = json.getJSONObject("phonebook")
-            val keys = phonebookJson.keys()
-            while (keys.hasNext()) {
-                val name = keys.next()
-                phonebookMap[name] = phonebookJson.getString(name)
-            }
-            val remotes = Network.parseRemotes(json)
-            if (remotes.isEmpty()) {
-                log("Config error: no remotes (need 'remotes' map or legacy 'remote' object)")
-                return null
-            }
-            val services = try {
-                Network.parseServices(json)
+            return try {
+                ConfigParser.parse(JSONObject(rawText))
             } catch (e: Exception) {
-                log("Storage services skipped: ${e.message}")
-                emptyList()
+                log("Config error: ${e.message}")
+                null
             }
-            val tellPrefix = Network.parseTellPrefix(json)
-            val smsAllowed = Network.parseSmsAllowedCommands(json)
-            return Config(device, phonebookMap, remotes, services, tellPrefix, smsAllowed)
         }
 
         private fun logConfigLoaded(parsed: Config, source: String) {
             log(
                 "Config loaded ($source): device=${parsed.device}, " +
-                    "phonebook=${parsed.phonebook.size}, " +
+                    "principals=${parsed.registry.localAgents.size}, " +
                     "remotes=${parsed.remotes.size}, " +
-                    "services=${parsed.services.size}"
+                    "services=${parsed.services.size}",
             )
         }
     }
 
     data class Config(
         val device: String,
-        val phonebook: Map<String, String>,
+        val registry: PrincipalRegistry,
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,
-        val tellPrefix: String = PhoneNormalize.DEFAULT_TELL_PREFIX,
-        /** Verbs permitted over the SMS/RCS channel (see [SmsCommandPolicy]). */
-        val smsAllowedCommands: Set<String> = SmsCommandPolicy.DEFAULT_ALLOWED,
-    )
+    ) {
+        val routing: RoutingConfig get() = registry.routing
+    }
 
     override fun onCreate() {
         super.onCreate()

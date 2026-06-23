@@ -10,22 +10,25 @@ contributor would want to know — especially gotchas that cost you time.
 An Android app that bridges the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
 cluster to a phone. Upstream daemon code lives at `~/bin/apps/a8s` on the
 operator machine — see `A8S_CLUSTER_INTEGRATION.md` for how routing, remotes,
-and opaque sub-identities relate to this app. Acts as a participant on the
+and opaque phone-agent SMS forwards relate to this app. Acts as a participant on the
 MQTT topic and:
 
-- **Command-driven model** — phonebook participants issue
-  `/command args` messages; the device executes locally and replies
-  over MQTT. There is no implicit forwarding or SMS gateway behavior.
+- **Command-driven model** — configured agents issue `/command args` to
+  the **device node**; the phone executes locally and replies over MQTT.
+  There is no implicit forwarding or SMS gateway behavior for device-bound
+  non-commands.
+- **Phone-agent bridge** — MQTT `to: <phone-agent>` (a principal with a
+  `phone` field) forwards **opaque SMS**, including slash-prefixed text;
+  nothing is executed locally on that path.
 - **Explicit SMS** — `/send <number> <message>`, `/mms <number> <url>`,
   `/reply <number> <text>` (fires cached RCS notification reply action).
 - **SMS/RCS → MQTT** — incoming SMS or intercepted Google Messages RCS
-  notifications publish back to the cluster as if they came from the
-  matched phonebook participant. Media is extracted, uploaded via
+  from a phone principal publishes as `from: <phone-agent>` to
+  `routing.sms_inbound_agent`. Media is extracted, uploaded via
   configured storage services, and attached to the outbound envelope.
-- **Phonebook /commands** — any phonebook participant can issue
-  `/info`, `/logs`, `/send`, `/screenshot`, `/dashboard`, etc. and get a
-  `tell`'d response back. Phonebook membership *is* the privilege; there
-  is no separate `owner`. Non-phonebook senders drop.
+- **Role-gated commands** — principals carry roles; roles define allowed
+  verbs (`*` = all). MQTT to `device` and SMS `/verb` from a phone
+  principal both check role permission. Non-principal senders drop.
 
 Full slash-command catalogue with arg shapes lives in `README.md`.
 
@@ -39,7 +42,13 @@ Full slash-command catalogue with arg shapes lives in `README.md`.
 | `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent` (modern API; older PDU-extraction path was removed). Forwards to `A8sService.publishIncoming`. |
 | `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Extracts media via `MediaExtractor` (on a worker thread) and caches the notification's reply action for `/reply`. Forwards to `A8sService.publishIncoming` with optional file attachments. |
 | `BootReceiver.kt` | Re-launches `A8sService` on `BOOT_COMPLETED`. |
-| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Variants: `Command(sender, name, args, files, envelopeId)` / `NotACommand(sender)` / `Drop(reason)` / `ParseError(reason)`. `EnvelopeFile` + `parseEnvelopeFiles` extract inbound `files[]` attachments. **All routing logic lives here so it's unit-testable.** Service layer just dispatches. |
+| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Handles MQTT **to device only** — agent auth + role gate. Variants: `Command` / `NotACommand` / `Drop` / `ParseError`. |
+| `PhoneAgentRoute.kt` | MQTT **to phone-backed agent** → opaque SMS forward (checked before `decideRoute` in `A8sService.handleMqttMessage`). |
+| `PrincipalConfig.kt` | `ConfigParser`, `PrincipalRegistry`, `RolePolicy` — strict JSON parse for `roles` + `principals` + `routing`. Pure Kotlin. |
+| `IncomingSmsRouter.kt` | SMS/RCS ingress: phone-principal match, SMS-originated slash commands, fall-through publish as phone agent. |
+| `SmsSlashCommand.kt` | Classify inbound SMS bodies as authorized/forbidden/not-a-command using role policy. |
+| `SmsCommandDelivery.kt` | Phone-agent SMS forward + SMS reply body building (inline storage URLs). |
+| `CmdTell.kt` | `/tell <agent> <message>` — MQTT publish with phone principal as `from`. |
 | `Commands.kt` | Pure formatters for slash-command output. Consumes `InfoSnapshotter.InfoSnapshot` and renders via `renderInfo` / `renderLogs`. Keeps Android-specific gathering out of the formatter so it tests without a Context. |
 | `InfoSnapshotter.kt` | Android-side gatherer for `/info`. `capture(context, config, verbose)` builds `InfoSnapshot` (~150 fields in verbose mode). Field catalogue in `INFO_FIELD_RESEARCH.md`. |
 | `PublishDedup.kt` | Bounded LRU keyed on `<recipient>\|<body>`, default 5-minute window / 100 entries. Stops the duplicate-publish bug from Google Messages re-posting notifications. |
@@ -74,7 +83,7 @@ Full slash-command catalogue with arg shapes lives in `README.md`.
 | `UiActionReply.kt` | Shared `Cmd*` helper: takes the gesture's text reply and a `kind` label, captures a post-action screenshot via `service.captureScreenshotPng`, and forwards through `service.replyToSender(... files = listOf(png))`. Constants `A11Y_DISABLED_MSG` and `POST_GESTURE_SETTLE_MS` live here. |
 | `SecureConfigStore.kt` | Wraps `androidx.security.crypto.EncryptedSharedPreferences` (Keystore-backed AES-256-GCM). On every successful `loadConfig`, the parsed `remotes` JSON blob is mirrored into `secure_config.xml` so MQTT credentials at rest are ciphertext. Threat model: an attacker abusing `/cat` of our own data dir gets opaque bytes, not the broker password. |
 | `RemoteConfig.kt` | One MQTT remote (transport, broker, topic, username, password). |
-| `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — turns the JSON config into typed `Map<String, RemoteConfig>` + `List<StorageService>`. Accepts both new (`remotes` map) and legacy (singular `remote` block) shapes; rejects unknown spec keys to fail loud on typos. |
+| `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — strict JSON (no legacy shapes). |
 | `StorageService.kt` | Interface for cross-cluster file backends — `store(file): URL`, `retrieve(url, dest): Bool`. Stateless. |
 | `TempFileOrgService.kt` | First (and currently only) `StorageService` impl. Pure-stdlib `HttpURLConnection` multipart upload + GET-`/download` retrieval. 50 MiB cap to stay well under the upstream's 100 MB hard limit. Per-service opts: `expiry_hours` (1/6/24/48, default 24), `timeout_s` (default 30). |
 
@@ -86,7 +95,7 @@ service layer and is exercised end-to-end on a real phone.
 
 | File | Topic |
 |---|---|
-| `A8S_CLUSTER_INTEGRATION.md` | How the upstream a8s daemon routes over MQTT vs this Android participant; sub-identity / SMS command design (#38) |
+| `A8S_CLUSTER_INTEGRATION.md` | Historical cluster integration notes; superseded in part by principals config (1.29.0) |
 | `MQTT_COMMAND_DEDUP.md` | Duplicate `/send` from MQTT upstream retries (issue #36) — asymmetric Wi‑Fi, daemon vs Android mitigations |
 | `INFO_FIELD_RESEARCH.md` | `/info` verbose field catalogue |
 | `RCS_RESEARCH.md` | Third-party RCS access limits and workarounds |
@@ -127,40 +136,47 @@ With attachments, `files` is a non-empty array:
   `storage`). Inbound slash commands parse `files` into
   `MqttRoute.Command.files` for handlers like `/send`.
 
-## Routing decision (decideRoute)
+## Routing decision
 
-Pure function. Order of checks matters — early returns shape the
-contract:
+Two inbound MQTT paths in `A8sService.handleMqttMessage` (order matters):
 
-1. **Self-loopback.** `from == config.device` → `Drop`. Brokers echo our
-   own publishes back to every subscriber on the topic; without this
-   filter we'd re-route them as fresh commands.
+1. **`PhoneAgentRoute.tryForward`** — `to` is a phone-backed principal →
+   opaque SMS (`gatePhoneAgentForward` dedup). Slash content is **not**
+   executed locally.
+2. **`decideRoute`** — `to == config.device` only:
+
+Pure function order (`decideRoute`):
+
+1. **Self-loopback.** `from == config.device` or `from` is a phone-backed
+   principal we publish as → `Drop` (broker echo of our own outbound).
 2. **Missing `to`.** → `Drop`.
-3. **`to != config.device`** → `Drop("not this device")`. The app only
-   processes messages addressed directly to it.
-4. **`to == config.device`** (this device is the recipient):
-   - **Phonebook gate.** `from` must be a phonebook key. Otherwise the
-     envelope drops — non-phonebook senders cannot reach the operator
-     or run commands.
-   - **Slash command.** If `content.startsWith("/")` →
-     `Command(sender, verb, args, files)`. Verb is lowercased; empty verb
-     (`"/   "`) drops. Envelope `files` are parsed and passed through.
-   - **Not a command.** Else → `NotACommand(sender)`. Logged but not
-     acted on — there is no implicit SMS forwarding.
+3. **`to != config.device`** → `Drop("not this device")`.
+4. **`to == config.device`**:
+   - **Agent gate.** `from` must be a configured principal.
+   - **Role gate.** Principal's roles must permit the verb.
+   - **Slash command.** `content.startsWith("/")` → `Command`.
+   - **Not a command.** Else → `NotACommand` (logged, not forwarded).
 
 ## Configuration JSON (`a8s.json`)
 
 ```json
 {
-  "device":   "<this phone's participant name>",
-  "phonebook": { "Clover": "+15550001111", "Gerry": "+15550002222" },
+  "device": "android-pixel-7",
+  "roles": {
+    "owner": { "commands": ["*"] }
+  },
+  "principals": [
+    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"] },
+    { "agent": "knobert", "roles": ["owner"] }
+  ],
+  "routing": { "sms_inbound_agent": "knobert" },
   "remotes": {
     "hivemq": {
       "transport": "mqtt",
-      "broker":    "ssl://broker:8883",
-      "topic":     "...",
-      "username":  "...",
-      "password":  "..."
+      "broker": "ssl://broker:8883",
+      "topic": "...",
+      "username": "...",
+      "password": "..."
     }
   },
   "services": {
@@ -174,10 +190,12 @@ contract:
 }
 ```
 
-The pre-1.16.0 `forward` and `owner` keys are dropped on parse with a
-startup warning. Phonebook membership is the single auth gate, and
-`phonebook[from]` is the per-sender forward target. The MQTT
-credentials are persisted encrypted-at-rest via `SecureConfigStore`.
+**Strict parse (1.29.0):** rejects `phonebook`, `owner`, `forward`,
+`sms_command`, legacy `remote`. `device` must not equal any
+`principals[].agent`. `routing.sms_inbound_agent` must be a principal
+(not `device`). An `owner` role is required in `roles`.
+
+MQTT credentials are persisted encrypted-at-rest via `SecureConfigStore`.
 
 **Multiple remotes** — `remotes` is a map; each entry gets its own
 paho client, subscriber thread, and reconnect loop. Outbound publishes
@@ -193,20 +211,16 @@ implemented. Active paths: outbound uploads (`/screenshot`, `/photo`,
 inbound retrieval (`/download`, `/mms`, `/dashboard bg`). `/screenshot`
 requires at least one configured service.
 
-**Backwards compatibility (1.9.0 → 1.10.0):** the parser also accepts
-the legacy singular `"remote"` block (with `"url"` instead of
-`"broker"`) and wraps it as `remotes: { "default": ... }`. Lets an
-in-place `/update` not require the user to rewrite the config first.
-
 - The user picks the file via Storage Access Framework; the URI is
   persisted (`takePersistableUriPermission`) so reloads work post-reboot.
   The **Permanently delete source file after loading** checkbox in
   `MainActivity` does a best-effort secure delete (zero-overwrite then
   SAF delete) of the picked file after the parse succeeds; per-launch
   state, default unchecked.
-- `phonebook` plays two roles: (a) inbound reverse-lookup naming the
-  publisher on SMS→MQTT; (b) auth gate — only phonebook senders can
-  reach `device` and run commands.
+- **`principals`** with `phone` match inbound SMS/RCS by normalized
+  digits; fall-through publishes as the phone agent, not `device`.
+- **Remote agents** (no `phone`, e.g. `knobert`) send MQTT commands to
+  `device` but are not treated as self-loopback.
 
 ## Permissions
 
@@ -214,7 +228,7 @@ in-place `/update` not require the user to rewrite the config first.
 |---|---|---|
 | `SEND_SMS` / `RECEIVE_SMS` / `READ_SMS` | gateway IO | runtime prompt on launch |
 | `READ_PHONE_STATE` | required for SMS APIs | runtime prompt |
-| `READ_CONTACTS` | resolve RCS notification's contact display name → phone number for the phonebook lookup | runtime prompt |
+| `READ_CONTACTS` | resolve RCS notification's contact display name → phone number for principal phone matching | runtime prompt |
 | `POST_NOTIFICATIONS` | foreground service notification on API 33+ | runtime prompt (gated on `>= TIRAMISU`) |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | RCS interception | special — Settings → Notification access (manifest declares it; the **Open Notification Access** button in MainActivity opens the page) |
 | `BIND_ACCESSIBILITY_SERVICE` | UI automation (`/tap`, `/swipe`, `/macro`, …) | special — declared on the `<service>` element only (signature-protected, no `<uses-permission>`); user toggles it on in **Settings → Accessibility → Installed services → a8s Automation**. The **Enable Accessibility Service** button + the Grant-All flow both jump to that page. Android shows a recurring "has full access to your device" toast while it's on; not suppressible. |
@@ -330,7 +344,7 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
   exists: `MqttRouteTest::content field is read instead of body`.
 - **Don't publish with `to: "all"`.** That was the legacy outbound
   shape; it doesn't resolve on the host unless an alias literally
-  named `all` exists. Use the matched phonebook participant name.
+  named `all` exists. Use the sender agent name from `principals`.
 - **Don't bypass `PublishDedup`.** Google Messages re-posts
   notifications on thread updates; without dedup the cluster sees N
   copies of the same SMS reply.
@@ -338,9 +352,10 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
   `/reply`, and `/mms` must pass through `CommandDispatch` /
   `gateInboundSmsCommand` before queuing SMS — upstream MQTT retries with
   fresh ULIDs will otherwise deliver duplicate texts.
-- **Don't trust the `from` without checking the phonebook.** Phonebook
-  membership is the single auth gate for self-addressed envelopes.
-  Non-phonebook senders are dropped before any command processing.
+- **Don't trust `from` without principal + role checks.** Non-principals
+  are dropped before command processing on the device path.
+- **Don't execute slash commands on phone-agent MQTT.** `PhoneAgentRoute`
+  forwards opaque SMS; only `to == device` runs commands.
 - **Don't add a fresh debug keystore.** Let the committed
   `app/debug.keystore` sign every build, or in-place upgrades break.
 - **Don't assume MQTT publish succeeded.** `publishToAllRemotes` queues

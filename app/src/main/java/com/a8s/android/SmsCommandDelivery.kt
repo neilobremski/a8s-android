@@ -4,33 +4,28 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-/**
- * SMS delivery for sub-identity forwards and SMS-originated command replies (#38).
- */
+/** SMS delivery for phone-agent forwards and SMS-originated command replies. */
 object SmsCommandDelivery {
 
-    fun forwardToSms(service: A8sService, config: A8sAndroid.Config, forward: SubIdentityRoute.Forward) {
-        if (!gateSubIdentityForward(forward.envelopeId, forward.smsToNumber, forward.content)) {
-            A8sAndroid.log("Sub-identity forward to ${PhoneNormalize.maskNumber(forward.smsToNumber)} skipped (duplicate)")
+    fun forwardToSms(service: A8sService, forward: PhoneAgentRoute.Forward) {
+        if (!gatePhoneAgentForward(forward.envelopeId, forward.targetAgent, forward.content)) {
+            A8sAndroid.log(
+                "Phone-agent forward to ${forward.targetAgent} " +
+                    "(${PhoneNormalize.maskNumber(forward.smsToNumber)}) skipped (duplicate)",
+            )
             return
         }
-        // Attribute the sender so the operator can tell agents apart.
         val attributed = if (forward.from.isNotBlank()) "${forward.from}: ${forward.content}" else forward.content
         A8sAndroid.log(
-            "MQTT sub-identity -> SMS ${forward.from} -> ${PhoneNormalize.maskNumber(forward.smsToNumber)}: " +
+            "MQTT ${forward.targetAgent} -> SMS ${PhoneNormalize.maskNumber(forward.smsToNumber)}: " +
                 "${service.preview(forward.content)} [+${forward.files.size} file(s)]",
         )
-        if (forward.files.isEmpty()) {
-            service.sendSms(forward.smsToNumber, CmdHelpers.capForSms(attributed))
-            return
+        val body = if (forward.files.isEmpty()) {
+            CmdHelpers.capForSms(attributed)
+        } else {
+            CmdHelpers.buildSendBody(CmdHelpers.capForSms(attributed), forward.files)
         }
-        Thread {
-            val destDir = File(service.cacheDir, "subidentity-in")
-            val results = FileDownloader.downloadFiles(forward.files, config.services, destDir)
-            val body = FileDownloader.buildSmsBody(CmdHelpers.capForSms(attributed), results)
-            service.sendSms(forward.smsToNumber, body)
-            results.mapNotNull { it.file }.forEach { it.delete() }
-        }.start()
+        service.sendSms(forward.smsToNumber, body)
     }
 
     fun smsBodyWithUploads(

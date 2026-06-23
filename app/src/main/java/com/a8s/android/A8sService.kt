@@ -284,8 +284,8 @@ class A8sService : LifecycleService() {
             A8sAndroid.log("MQTT Handle Error: ${e.message}")
             return
         }
-        SubIdentityRoute.tryForward(json, config)?.let { forward ->
-            SmsCommandDelivery.forwardToSms(this, config, forward)
+        PhoneAgentRoute.tryForward(json, config)?.let { forward ->
+            SmsCommandDelivery.forwardToSms(this, forward)
             return
         }
         when (val route = decideRoute(json, config)) {

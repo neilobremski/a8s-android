@@ -13,7 +13,7 @@ class CommandsRenderInfoTest {
         audio = null, sensors = null, location = null, camera = null, connectivity = null,
         power = null, process = null, security = null, apps = null, notifications = null,
         remotes = emptyList(), services = emptyList(),
-        phonebookSize = 0,
+        principalCount = 0,
         serviceUptimeMs = 0L, a11yRunning = null, projectionConsent = false,
     )
 
@@ -42,7 +42,7 @@ class CommandsRenderInfoTest {
             Commands.RemoteStatus("hivemq", "ssl://broker:8883", "test-topic", connected = true),
         ),
         services = listOf("tempfile"),
-        phonebookSize = 1,
+        principalCount = 1,
         serviceUptimeMs = 5 * 60 * 1000L,
     )
 
@@ -54,7 +54,7 @@ class CommandsRenderInfoTest {
         battery: InfoSnapshotter.Battery? = this.battery,
         remotes: List<Commands.RemoteStatus> = this.remotes,
         services: List<String> = this.services,
-        phonebookSize: Int = this.phonebookSize,
+        principalCount: Int = this.principalCount,
         serviceUptimeMs: Long = this.serviceUptimeMs,
     ) = InfoSnapshotter.InfoSnapshot(
         app = app, identity = identity, os = os, cellular = this.cellular, wifi = this.wifi,
@@ -64,7 +64,7 @@ class CommandsRenderInfoTest {
         connectivity = this.connectivity, power = this.power, process = this.process,
         security = this.security, apps = this.apps, notifications = this.notifications,
         remotes = remotes, services = services,
-        phonebookSize = phonebookSize,
+        principalCount = principalCount,
         serviceUptimeMs = serviceUptimeMs, a11yRunning = this.a11yRunning,
         projectionConsent = this.projectionConsent,
     )
@@ -76,7 +76,7 @@ class CommandsRenderInfoTest {
         // Header always present; config line always present.
         assertTrue(out.contains("a8s-android"))
         assertTrue(out.contains("Config:"))
-        assertTrue(out.contains("phonebook=0"))
+        assertTrue(out.contains("principals=0"))
         assertTrue(out.contains("Remotes: (none configured)"))
         assertTrue(out.contains("Storage services: (none)"))
     }
@@ -204,7 +204,7 @@ class CommandsRenderInfoTest {
     fun `renderInfo config line still rendered`() {
         val out = Commands.renderInfo(baseSnapshot(), verbose = false)
         assertTrue(out.contains("Config: "))
-        assertTrue(out.contains("phonebook=1"))
+        assertTrue(out.contains("principals=1"))
         assertFalse(out.contains("owner="))
         assertFalse(out.contains("forward="))
     }
