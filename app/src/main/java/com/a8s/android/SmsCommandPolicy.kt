@@ -28,6 +28,7 @@ object SmsCommandPolicy {
     val DEFAULT_ALLOWED: Set<String> = setOf(
         "info",
         "logs",
+        "trace",
         "location",
         "say",
         "notify",

@@ -407,6 +407,10 @@ object Commands {
         return args[0].toIntOrNull() ?: default
     }
 
+    /** Same clamp as logs: [1, 500]. */
+    fun parseTraceArgs(args: List<String>, default: Int = DEFAULT_LOGS_LINES): Int =
+        parseLogsArgs(args, default)
+
     fun renderUnknown(name: String): String =
         "unknown command: /$name\n" +
             "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")

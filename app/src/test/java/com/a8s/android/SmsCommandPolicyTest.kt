@@ -8,7 +8,7 @@ class SmsCommandPolicyTest {
 
     @Test
     fun `default allows safe verbs`() {
-        for (verb in listOf("info", "logs", "location", "tell", "screenshot")) {
+        for (verb in listOf("info", "logs", "trace", "location", "tell", "screenshot")) {
             assertTrue(SmsCommandPolicy.isAllowed(verb, SmsCommandPolicy.DEFAULT_ALLOWED), "expected $verb allowed")
         }
     }

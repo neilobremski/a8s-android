@@ -282,26 +282,16 @@ class A8sService : LifecycleService() {
             JSONObject(payload)
         } catch (e: org.json.JSONException) {
             A8sAndroid.log("MQTT Handle Error: ${e.message}")
+            TransactionTrace.record(
+                TransactionTrace.Event(
+                    flow = "MQTT_IN",
+                    status = TransactionTrace.Status.FAIL,
+                    summary = "invalid JSON: ${e.message}",
+                ),
+            )
             return
         }
-        SubIdentityRoute.tryForward(json, config)?.let { forward ->
-            SmsCommandDelivery.forwardToSms(this, config, forward)
-            return
-        }
-        when (val route = decideRoute(json, config)) {
-            is MqttRoute.NotACommand -> {
-                val reply = "error: message must start with a /command\n" +
-                    "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
-                publishToSender(config, route.sender, reply)
-            }
-            is MqttRoute.Command -> CommandDispatch.handle(route, ::executeCommand)
-            is MqttRoute.Drop -> {
-                A8sAndroid.log("MQTT -> drop (${route.reason})")
-            }
-            is MqttRoute.ParseError -> {
-                A8sAndroid.log("MQTT Handle Error: ${route.reason}")
-            }
-        }
+        MqttInboundHandler.handle(this, json, config)
     }
 
     internal fun preview(s: String, max: Int = 200): String {
@@ -327,6 +317,7 @@ class A8sService : LifecycleService() {
                 Commands.renderInfo(InfoSnapshotter.capture(this, config, verbose), verbose)
             }
             "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
+            "trace" -> TransactionTrace.render(Commands.parseTraceArgs(cmd.args))
             else -> Commands.renderUnknown(cmd.name)
         }
         replyToSender(config, cmd, reply)
@@ -454,7 +445,7 @@ class A8sService : LifecycleService() {
     fun serviceUptimeMs(): Long =
         if (serviceStartMs == 0L) 0L else System.currentTimeMillis() - serviceStartMs
 
-    private fun publishToSender(
+    internal fun publishToSender(
         config: A8sAndroid.Config,
         sender: String,
         body: String,
