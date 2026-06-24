@@ -299,6 +299,7 @@ object CmdHelpers {
     val KNOWN_COMMANDS: List<String> = listOf(
         "/info",
         "/logs [N]",
+        "/trace [N]",
         "/send <number> <message>",
         "/mms <number> <url>",
         "/reply <number> <text>",

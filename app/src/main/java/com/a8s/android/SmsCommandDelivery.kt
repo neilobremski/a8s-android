@@ -8,10 +8,22 @@ import java.io.File
 object SmsCommandDelivery {
 
     fun forwardToSms(service: A8sService, forward: PhoneAgentRoute.Forward) {
+        val txnId = forward.envelopeId
+        val maskedTo = TransactionTrace.maskTo(forward.smsToNumber)
         if (!gatePhoneAgentForward(forward.envelopeId, forward.targetAgent, forward.content)) {
             A8sAndroid.log(
                 "Phone-agent forward to ${forward.targetAgent} " +
                     "(${PhoneNormalize.maskNumber(forward.smsToNumber)}) skipped (duplicate)",
+            )
+            TransactionTrace.record(
+                TransactionTrace.Event(
+                    txnId = txnId,
+                    flow = "PHONE_FWD",
+                    status = TransactionTrace.Status.SKIP,
+                    from = forward.from,
+                    to = maskedTo,
+                    summary = "duplicate envelope (dedup gate)",
+                ),
             )
             return
         }
@@ -20,13 +32,56 @@ object SmsCommandDelivery {
             "MQTT ${forward.targetAgent} -> SMS ${PhoneNormalize.maskNumber(forward.smsToNumber)}: " +
                 "${service.preview(forward.content)} [+${forward.files.size} file(s)]",
         )
-        val body = if (forward.files.isEmpty()) {
-            CmdHelpers.capForSms(attributed)
-        } else {
-            CmdHelpers.buildSendBody(CmdHelpers.capForSms(attributed), forward.files)
+        val fileDetail = summarizeForwardFiles(forward.files)
+        if (forward.files.isEmpty()) {
+            service.sendSms(forward.smsToNumber, CmdHelpers.capForSms(attributed))
+            TransactionTrace.record(
+                TransactionTrace.Event(
+                    txnId = txnId,
+                    flow = "PHONE_FWD",
+                    status = TransactionTrace.Status.OK,
+                    from = forward.from,
+                    to = maskedTo,
+                    summary = "text: ${service.preview(forward.content)}",
+                    detail = "files: none\nsms: sent text-only",
+                ),
+            )
+            return
         }
+        val body = CmdHelpers.buildSendBody(CmdHelpers.capForSms(attributed), forward.files)
         service.sendSms(forward.smsToNumber, body)
+        val withUrls = forward.files.count { it.storageUrls.isNotEmpty() }
+        val status = when {
+            withUrls == forward.files.size -> TransactionTrace.Status.OK
+            withUrls > 0 -> TransactionTrace.Status.PARTIAL
+            else -> TransactionTrace.Status.FAIL
+        }
+        val smsNote = when {
+            withUrls == 0 -> "sms: sent text-only — no storage url(s) in envelope"
+            withUrls < forward.files.size -> "sms: sent with inline URL(s) for $withUrls/${forward.files.size} file(s)"
+            else -> "sms: sent with inline URL(s) for all file(s)"
+        }
+        TransactionTrace.record(
+            TransactionTrace.Event(
+                txnId = txnId,
+                flow = "PHONE_FWD",
+                status = status,
+                from = forward.from,
+                to = maskedTo,
+                summary = "text: ${service.preview(forward.content)}",
+                detail = fileDetail + "\n$smsNote",
+            ),
+        )
     }
+
+    private fun summarizeForwardFiles(files: List<EnvelopeFile>): String =
+        files.joinToString("\n") { ef ->
+            val n = ef.storageUrls.size
+            when {
+                n == 0 -> "  • ${ef.filename}: NO storage urls in envelope"
+                else -> "  • ${ef.filename}: $n storage url(s) → ${ef.storageUrls.first()}"
+            }
+        }
 
     fun smsBodyWithUploads(
         service: A8sService,
