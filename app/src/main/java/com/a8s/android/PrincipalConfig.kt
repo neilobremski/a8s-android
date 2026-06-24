@@ -2,6 +2,7 @@ package com.a8s.android
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.regex.PatternSyntaxException
 
 /** Named command allow-list. `*` grants every verb. */
 data class RoleSpec(val commands: Set<String>)
@@ -11,7 +12,44 @@ data class Principal(
     val agent: String,
     val phone: String?,
     val roles: Set<String>,
+    /** When set, only matching senders may MQTT-forward to this phone principal. */
+    val allowFrom: List<AllowFromMatcher>? = null,
 )
+
+/**
+ * One `allow_from` entry: exact agent name, or a regex when the pattern
+ * contains regex metacharacters (e.g. `knobert-.*`).
+ */
+data class AllowFromMatcher(val source: String) {
+    private val exact: String?
+    private val regex: Regex?
+
+    init {
+        if (looksLikeRegex(source)) {
+            exact = null
+            regex = Regex(source)
+        } else {
+            exact = source
+            regex = null
+        }
+    }
+
+    val isLiteral: Boolean get() = exact != null
+
+    fun matches(from: String): Boolean =
+        from == exact || regex?.matches(from) == true
+
+    companion object {
+        internal fun looksLikeRegex(s: String): Boolean {
+            for (c in s) {
+                if (c in REGEX_METACHAR) return true
+            }
+            return false
+        }
+
+        private const val REGEX_METACHAR = ".^$+*?[](){}|\\"
+    }
+}
 
 data class RoutingConfig(val smsInboundAgent: String)
 
@@ -21,7 +59,8 @@ data class RoutingConfig(val smsInboundAgent: String)
  * - MQTT commands run only when `to == device` and `from` is a known agent
  *   with a role permitting the verb.
  * - MQTT to a phone-backed agent (`to == neil-phone`) forwards opaque SMS;
- *   slash-prefixed content is **not** executed locally.
+ *   slash-prefixed content is **not** executed locally. Optional
+ *   `allow_from` on that principal restricts which agents may trigger SMS.
  * - SMS from a matched phone principal: `/verb` runs on-device; plain text
  *   publishes `from: <phone-agent>` → `routing.sms_inbound_agent`.
  */
@@ -57,6 +96,19 @@ class PrincipalRegistry(
         val p = principalByAgent(agent) ?: return false
         return allowsCommand(p, verb)
     }
+
+    /**
+     * Whether [fromAgent] may MQTT-forward to phone-backed [targetAgent].
+     * Absent `allow_from` on the target → any sender (non-loopback handled upstream).
+     */
+    fun allowsPhoneForward(fromAgent: String, targetAgent: String): Boolean {
+        val target = principalByAgent(targetAgent.trim()) ?: return false
+        if (target.phone == null) return false
+        val allowed = target.allowFrom ?: return true
+        if (allowed.isEmpty()) return true
+        val from = fromAgent.trim()
+        return allowed.any { it.matches(from) }
+    }
 }
 
 object RolePolicy {
@@ -76,7 +128,7 @@ object ConfigParser {
 
     private val ROOT_ALLOWED = setOf("device", "roles", "principals", "routing", "remotes", "services")
     private val ROLE_ALLOWED = setOf("commands")
-    private val PRINCIPAL_ALLOWED = setOf("agent", "phone", "roles")
+    private val PRINCIPAL_ALLOWED = setOf("agent", "phone", "roles", "allow_from")
     private val ROUTING_ALLOWED = setOf("sms_inbound_agent")
 
     fun parse(root: JSONObject): A8sAndroid.Config {
@@ -91,6 +143,22 @@ object ConfigParser {
             require(p.agent != device) { "principal agent '${p.agent}' must not equal device" }
             for (r in p.roles) {
                 require(r in roles) { "principal '${p.agent}': unknown role '$r'" }
+            }
+            p.allowFrom?.forEach { matcher ->
+                if (!matcher.isLiteral) return@forEach
+                val sender = matcher.source
+                require(sender != device) {
+                    "principal '${p.agent}': allow_from must not include device"
+                }
+                require(sender != p.agent) {
+                    "principal '${p.agent}': allow_from must not include self"
+                }
+                require(principals.any { it.agent == sender }) {
+                    "principal '${p.agent}': allow_from '$sender' is not a configured agent"
+                }
+            }
+            require(p.allowFrom == null || p.phone != null) {
+                "principal '${p.agent}': allow_from requires phone"
             }
         }
         val routing = parseRouting(root.getJSONObject("routing"), principals, device)
@@ -146,7 +214,29 @@ object ConfigParser {
                 if (r.isNotEmpty()) roles += r
             }
             require(roles.isNotEmpty()) { "principal '$agent': roles must not be empty" }
-            out += Principal(agent, phone, roles)
+            val allowFrom = parseAllowFrom(obj, agent)
+            out += Principal(agent, phone, roles, allowFrom)
+        }
+        return out
+    }
+
+    private fun parseAllowFrom(obj: JSONObject, agent: String): List<AllowFromMatcher>? {
+        if (!obj.has("allow_from")) return null
+        val arr = obj.getJSONArray("allow_from")
+        val seen = mutableSetOf<String>()
+        val out = mutableListOf<AllowFromMatcher>()
+        for (j in 0 until arr.length()) {
+            val raw = arr.optString(j).trim()
+            require(raw.isNotEmpty()) { "principal '$agent': allow_from entries must not be blank" }
+            require(raw !in seen) { "principal '$agent': duplicate allow_from '$raw'" }
+            seen += raw
+            try {
+                out += AllowFromMatcher(raw)
+            } catch (e: PatternSyntaxException) {
+                throw IllegalArgumentException(
+                    "principal '$agent': invalid allow_from regex '$raw': ${e.message}",
+                )
+            }
         }
         return out
     }

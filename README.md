@@ -6,7 +6,7 @@ A high-reliability messaging bridge for the [a8s (Agent Infinity System)](https:
 
 - **a8s Integration:** Operates as a remote node in an a8s cluster.
 - **Command-driven model:** Configured agents issue `/command` messages to the device node; commands execute locally and reply over MQTT.
-- **Phone-agent SMS bridge:** MQTT to a phone-backed agent (e.g. `neil-phone`) forwards opaque SMS — even `/logs` is not executed on the device.
+- **Phone-agent SMS bridge:** MQTT to a phone-backed agent (e.g. `neil-phone`) forwards opaque SMS when `from` matches that principal's `allow_from` (or the list is absent/empty) — even `/logs` is not executed on the device.
 - **Explicit SMS sending:** `/send`, `/mms`, `/reply` — no implicit forwarding.
 - **SMS/RCS to MQTT:** Incoming SMS and intercepted RCS notifications publish back to the cluster.
 - **Media receive:** Extracts images/video from RCS notifications (3 strategies) and MMS via ContentObserver.
@@ -27,7 +27,7 @@ The app is configured via a JSON file with the following schema:
     "owner": { "commands": ["*"] }
   },
   "principals": [
-    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"] },
+    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"], "allow_from": ["knobert", "knobert-.*"] },
     { "agent": "knobert", "roles": ["owner"] },
     { "agent": "neil-macbook", "roles": ["owner"] }
   ],
@@ -60,6 +60,12 @@ The app is configured via a JSON file with the following schema:
   - **`phone`** *(optional)* — E.164 number when this device bridges
     SMS for that agent. Principals without `phone` are MQTT-only.
   - **`roles`** — which role(s) apply when authorizing that agent.
+  - **`allow_from`** *(optional, phone principals only)* — agent names or
+    regex patterns permitted to MQTT-forward to this phone principal.
+    Entries without regex metacharacters match exactly; patterns with
+    metacharacters (e.g. `knobert-.*`) match the full sender name.
+    When set and non-empty, only matching senders trigger SMS; absent or
+    `[]` permits any sender (excluding self-loopback).
 - **`routing.sms_inbound_agent`** — where plain SMS from a phone
   principal publishes on MQTT (`from: <phone-agent>`,
   `to: <sms_inbound_agent>`). Must be a configured principal, not
@@ -85,7 +91,7 @@ The app is configured via a JSON file with the following schema:
 |------|----------|
 | MQTT `to: device`, `/verb`, authorized agent | Execute command on phone; reply MQTT |
 | MQTT `to: device`, non-command | Logged `NotACommand` (not forwarded) |
-| MQTT `to: <phone-agent>` | Opaque SMS to attached number (slash content **not** executed) |
+| MQTT `to: <phone-agent>` | Opaque SMS if `from` is on target's `allow_from` (or list absent/empty) |
 | SMS `/verb` from phone principal | Execute on phone; reply SMS |
 | SMS plain text from phone principal | MQTT `from: <phone-agent>` → `routing.sms_inbound_agent` |
 | SMS `/tell` from phone principal | MQTT envelope with `from: <phone-agent>` |

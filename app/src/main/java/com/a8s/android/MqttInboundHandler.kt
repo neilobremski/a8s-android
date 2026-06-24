@@ -11,20 +11,31 @@ object MqttInboundHandler {
         val to = json.optString("to")
         val fileSummary = TransactionTrace.summarizeEnvelopeFiles(json)
 
-        PhoneAgentRoute.tryForward(json, config)?.let { forward ->
-            TransactionTrace.record(
-                TransactionTrace.Event(
-                    txnId = txnId,
-                    flow = "MQTT_IN",
-                    status = TransactionTrace.Status.OK,
-                    from = from,
-                    to = TransactionTrace.maskTo(to),
-                    summary = "routed to phone-agent SMS forward",
-                    detail = fileSummary,
-                ),
-            )
-            SmsCommandDelivery.forwardToSms(service, forward)
-            return
+        PhoneAgentRoute.evaluate(json, config).let { phoneResult ->
+            when (phoneResult) {
+                is PhoneAgentRoute.Result.Ok -> {
+                    TransactionTrace.record(
+                        TransactionTrace.Event(
+                            txnId = txnId,
+                            flow = "MQTT_IN",
+                            status = TransactionTrace.Status.OK,
+                            from = from,
+                            to = TransactionTrace.maskTo(to),
+                            summary = "routed to phone-agent SMS forward",
+                            detail = fileSummary,
+                        ),
+                    )
+                    SmsCommandDelivery.forwardToSms(service, phoneResult.forward)
+                    return
+                }
+                is PhoneAgentRoute.Result.Denied -> {
+                    val reason = "from=$from not permitted to forward to ${phoneResult.targetAgent}"
+                    A8sAndroid.log("MQTT -> drop ($reason)")
+                    recordDrop(txnId, from, to, reason, fileSummary)
+                    return
+                }
+                PhoneAgentRoute.Result.NotApplicable -> Unit
+            }
         }
         when (val route = decideRoute(json, config)) {
             is MqttRoute.NotACommand -> {

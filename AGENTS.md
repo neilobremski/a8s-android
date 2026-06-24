@@ -37,7 +37,9 @@ MQTT topic and:
   non-commands.
 - **Phone-agent bridge** — MQTT `to: <phone-agent>` (a principal with a
   `phone` field) forwards **opaque SMS**, including slash-prefixed text;
-  nothing is executed locally on that path.
+  nothing is executed locally on that path. Optional `allow_from` on that
+  principal restricts which agents may trigger the forward (literal names
+  or regex patterns such as `knobert-.*`).
 - **Explicit SMS** — `/send <number> <message>`, `/mms <number> <url>`,
   `/reply <number> <text>` (fires cached RCS notification reply action).
 - **SMS/RCS → MQTT** — incoming SMS or intercepted Google Messages RCS
@@ -91,8 +93,8 @@ the PR will fail.
 | `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Extracts media via `MediaExtractor` (on a worker thread) and caches the notification's reply action for `/reply`. Forwards to `A8sService.publishIncoming` with optional file attachments. |
 | `BootReceiver.kt` | Re-launches `A8sService` on `BOOT_COMPLETED`. |
 | `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Handles MQTT **to device only** — agent auth + role gate. Variants: `Command` / `NotACommand` / `Drop` / `ParseError`. |
-| `PhoneAgentRoute.kt` | MQTT **to phone-backed agent** → opaque SMS forward (checked before `decideRoute` in `A8sService.handleMqttMessage`). |
-| `PrincipalConfig.kt` | `ConfigParser`, `PrincipalRegistry`, `RolePolicy` — strict JSON parse for `roles` + `principals` + `routing`. Pure Kotlin. |
+| `PhoneAgentRoute.kt` | MQTT **to phone-backed agent** → opaque SMS forward when `from` passes target's `allow_from` (checked before `decideRoute` via `MqttInboundHandler`). |
+| `PrincipalConfig.kt` | `ConfigParser`, `PrincipalRegistry`, `RolePolicy`, `AllowFromMatcher` — strict JSON parse for `roles` + `principals` + `routing`. Pure Kotlin. |
 | `IncomingSmsRouter.kt` | SMS/RCS ingress: phone-principal match, SMS-originated slash commands, fall-through publish as phone agent. |
 | `SmsSlashCommand.kt` | Classify inbound SMS bodies as authorized/forbidden/not-a-command using role policy. |
 | `SmsCommandDelivery.kt` | Phone-agent SMS forward + SMS reply body building (inline storage URLs). |
@@ -189,8 +191,10 @@ With attachments, `files` is a non-empty array:
 
 Two inbound MQTT paths in `A8sService.handleMqttMessage` (order matters):
 
-1. **`PhoneAgentRoute.tryForward`** — `to` is a phone-backed principal →
-   opaque SMS (`gatePhoneAgentForward` dedup). Slash content is **not**
+1. **`PhoneAgentRoute.evaluate`** — `to` is a phone-backed principal →
+   opaque SMS when `from` passes that principal's `allow_from` (absent or
+   `[]` = any sender; entries with regex metacharacters match the full
+   sender name). Denied senders drop with trace. Slash content is **not**
    executed locally.
 2. **`decideRoute`** — `to == config.device` only:
 
@@ -215,7 +219,7 @@ Pure function order (`decideRoute`):
     "owner": { "commands": ["*"] }
   },
   "principals": [
-    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"] },
+    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"], "allow_from": ["knobert", "knobert-.*"] },
     { "agent": "knobert", "roles": ["owner"] }
   ],
   "routing": { "sms_inbound_agent": "knobert" },
@@ -242,6 +246,10 @@ Pure function order (`decideRoute`):
 **Parse rules:** unknown top-level keys are rejected. `device` must not
 equal any `principals[].agent`. `routing.sms_inbound_agent` must name a
 configured principal (not `device`). An `owner` role is required in `roles`.
+Optional `allow_from` on a phone principal: literal agent names must be
+configured principals (not `device` or self); entries with regex
+metacharacters compile as full-name patterns (invalid regex rejected at
+load).
 
 MQTT credentials are persisted encrypted-at-rest via `SecureConfigStore`.
 
@@ -439,7 +447,8 @@ fun route(payload: String): MqttRoute = throw IllegalStateException("bad")
 - **Don't trust `from` without principal + role checks.** Non-principals
   are dropped before command processing on the device path.
 - **Don't execute slash commands on phone-agent MQTT.** `PhoneAgentRoute`
-  forwards opaque SMS; only `to == device` runs commands.
+  forwards opaque SMS; only `to == device` runs commands. Check
+  `allow_from` when a phone principal should reject unknown senders.
 - **Don't add a fresh debug keystore.** Let the committed
   `app/debug.keystore` sign every build, or in-place upgrades break.
 - **Don't assume MQTT publish succeeded.** `publishToAllRemotes` queues
