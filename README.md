@@ -50,10 +50,6 @@ The app is configured via a JSON file with the following schema:
 }
 ```
 
-**Breaking change (1.29.0):** the `phonebook`, `owner`, `forward`,
-`sms_command`, and legacy `remote` keys are no longer accepted. Rewrite
-your config to the shape above.
-
 - **`device`** — the Android node id on the cluster (e.g.
   `android-pixel-7`). MQTT `to: <device>` runs slash commands on the
   phone. Must **not** overlap any `principals[].agent` name.

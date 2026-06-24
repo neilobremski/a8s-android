@@ -5,6 +5,24 @@ needs to be productive in this repo without re-deriving everything from
 the source tree. Keep it terse. Update when you learn something a future
 contributor would want to know — especially gotchas that cost you time.
 
+See **Conventions for agents** below before editing docs, tests, or
+opening a PR.
+
+## Conventions for agents
+
+- **Document and test the current system.** `README.md`, this file, unit
+  tests, and PR bodies describe how things work *now*. Do not narrate
+  migration paths, version-cutover callouts, or "formerly / no longer /
+  breaking change in X.Y" unless the user explicitly asks. Git history is
+  the changelog.
+- **Version bumps are routine.** Every merging PR bumps `versionName` in
+  `app/build.gradle.kts` (and ideally `versionCode`). Use normal semver
+  increments (e.g. 1.28 → 1.29). Do not jump to a major version for
+  config or API breaks unless the user explicitly requests it.
+- **Research / postmortem docs** (`*_RESEARCH.md`, `MQTT_COMMAND_DEDUP.md`,
+  `A8S_CLUSTER_INTEGRATION.md`, …) may keep incident context for
+  forensics. Onboarding docs stay present-tense and as-is.
+
 ## What this is
 
 An Android app that bridges the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
@@ -32,6 +50,36 @@ MQTT topic and:
 
 Full slash-command catalogue with arg shapes lives in `README.md`.
 
+## Commands
+
+Run from the repo root. Requires `JAVA_HOME`/`ANDROID_HOME` exported (see
+**Build & verification** for one-time toolchain setup).
+
+```bash
+./gradlew detekt test :app:compileDebugKotlin   # pre-push gate — run before every PR
+./gradlew test                                  # unit tests only (host JVM, no emulator)
+./gradlew detekt                                # static analysis only
+./gradlew assembleDebug                         # → app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk   # in-place upgrade
+adb logcat -s A8sAndroid:I A8sService:I         # filtered runtime logs
+```
+
+`detekt test :app:compileDebugKotlin` is the exact command the
+`.githooks/pre-push` hook and CI `verify` job run. If it fails locally,
+the PR will fail.
+
+## Tech stack
+
+- **Language:** Kotlin 1.9.22, JVM target 17.
+- **Build:** Gradle (wrapper) + Android Gradle Plugin 8.2.2.
+- **SDK:** `compileSdk`/`targetSdk` 34, `minSdk` 26.
+- **Key deps:** Paho MQTT v3 `1.2.5` (standalone jar, *not* Paho Android
+  Service), `androidx.security:security-crypto:1.1.0-alpha06`,
+  `androidx.lifecycle:lifecycle-service:2.7.0`, Material `1.11.0`.
+- **Tests:** JUnit Jupiter (JUnit 5) `5.10.2` + `org.json:json` jar
+  (org.json ships with the Android runtime but not the host JVM).
+- **Lint:** detekt `1.23.6` (`detekt.yml` at repo root).
+
 ## Module map (under `app/src/main/java/com/a8s/android/`)
 
 | File | Role |
@@ -39,7 +87,7 @@ Full slash-command catalogue with arg shapes lives in `README.md`.
 | `A8sAndroid.kt` | `Application` subclass. Owns the static `Config` (parsed from JSON), the in-app log ring (50 lines, surfaced to the UI via `onLogListener`), and `loadConfig`/`saveUri`/`getSavedUri` for SAF persistence. Triggers `requestBatteryOptimizationExclusion` on first launch. |
 | `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds one Paho v3 client per configured remote, wake/wifi locks, `PublishDedup`, `PublishRetryQueue`, the SMS-sent broadcast receiver, and the `MmsObserver`. Routes inbound MQTT via `decideRoute` and dispatches commands via the `asyncCommands` map. Manages auto-update checks (6-hour interval, GitHub Releases API). |
 | `MainActivity.kt` | Tabbed UI (Dashboard / Logs / Setup). The Dashboard tab is a full-screen `WebView` driven by `Dashboard.kt` state. The Logs tab shows the live log ring. The Setup tab has permission grants, configuration loading, and the status panel. Requests dangerous perms via `RequestMultiplePermissions`. |
-| `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent` (modern API; older PDU-extraction path was removed). Forwards to `A8sService.publishIncoming`. |
+| `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent`. Forwards to `A8sService.publishIncoming`. |
 | `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Extracts media via `MediaExtractor` (on a worker thread) and caches the notification's reply action for `/reply`. Forwards to `A8sService.publishIncoming` with optional file attachments. |
 | `BootReceiver.kt` | Re-launches `A8sService` on `BOOT_COMPLETED`. |
 | `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Handles MQTT **to device only** — agent auth + role gate. Variants: `Command` / `NotACommand` / `Drop` / `ParseError`. |
@@ -83,7 +131,7 @@ Full slash-command catalogue with arg shapes lives in `README.md`.
 | `UiActionReply.kt` | Shared `Cmd*` helper: takes the gesture's text reply and a `kind` label, captures a post-action screenshot via `service.captureScreenshotPng`, and forwards through `service.replyToSender(... files = listOf(png))`. Constants `A11Y_DISABLED_MSG` and `POST_GESTURE_SETTLE_MS` live here. |
 | `SecureConfigStore.kt` | Wraps `androidx.security.crypto.EncryptedSharedPreferences` (Keystore-backed AES-256-GCM). On every successful `loadConfig`, the parsed `remotes` JSON blob is mirrored into `secure_config.xml` so MQTT credentials at rest are ciphertext. Threat model: an attacker abusing `/cat` of our own data dir gets opaque bytes, not the broker password. |
 | `RemoteConfig.kt` | One MQTT remote (transport, broker, topic, username, password). |
-| `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — strict JSON (no legacy shapes). |
+| `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — strict JSON; rejects unknown keys. |
 | `StorageService.kt` | Interface for cross-cluster file backends — `store(file): URL`, `retrieve(url, dest): Bool`. Stateless. |
 | `TempFileOrgService.kt` | First (and currently only) `StorageService` impl. Pure-stdlib `HttpURLConnection` multipart upload + GET-`/download` retrieval. 50 MiB cap to stay well under the upstream's 100 MB hard limit. Per-service opts: `expiry_hours` (1/6/24/48, default 24), `timeout_s` (default 30). |
 
@@ -95,7 +143,7 @@ service layer and is exercised end-to-end on a real phone.
 
 | File | Topic |
 |---|---|
-| `A8S_CLUSTER_INTEGRATION.md` | Historical cluster integration notes; superseded in part by principals config (1.29.0) |
+| `A8S_CLUSTER_INTEGRATION.md` | Upstream daemon routing vs this Android participant |
 | `MQTT_COMMAND_DEDUP.md` | Duplicate `/send` from MQTT upstream retries (issue #36) — asymmetric Wi‑Fi, daemon vs Android mitigations |
 | `INFO_FIELD_RESEARCH.md` | `/info` verbose field catalogue |
 | `RCS_RESEARCH.md` | Third-party RCS access limits and workarounds |
@@ -124,9 +172,8 @@ With attachments, `files` is a non-empty array:
 ```
 
 - `id` is **required**. The host's `network.py:316-318` drops envelopes
-  with no/invalid ULID. Use `Ulid.new()`. (Bug history: legacy outbound
-  used `body` instead of `content` and `to: "all"` — both broke routing
-  on the host side. Fixed; do not re-introduce.)
+  with no/invalid ULID. Use `Ulid.new()`. Wire field is `content` (not
+  `body`); do not publish with `to: "all"`.
 - `from` is force-stamped by the host's a8s router on its own outbox
   pass (see `apps/a8s/mailbox.py:526` upstream). On our side, treat
   `from` as the **unforgeable identity** for authorization decisions.
@@ -190,10 +237,9 @@ Pure function order (`decideRoute`):
 }
 ```
 
-**Strict parse (1.29.0):** rejects `phonebook`, `owner`, `forward`,
-`sms_command`, legacy `remote`. `device` must not equal any
-`principals[].agent`. `routing.sms_inbound_agent` must be a principal
-(not `device`). An `owner` role is required in `roles`.
+**Parse rules:** unknown top-level keys are rejected. `device` must not
+equal any `principals[].agent`. `routing.sms_inbound_agent` must name a
+configured principal (not `device`). An `owner` role is required in `roles`.
 
 MQTT credentials are persisted encrypted-at-rest via `SecureConfigStore`.
 
@@ -233,7 +279,7 @@ requires at least one configured service.
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | RCS interception | special — Settings → Notification access (manifest declares it; the **Open Notification Access** button in MainActivity opens the page) |
 | `BIND_ACCESSIBILITY_SERVICE` | UI automation (`/tap`, `/swipe`, `/macro`, …) | special — declared on the `<service>` element only (signature-protected, no `<uses-permission>`); user toggles it on in **Settings → Accessibility → Installed services → a8s Automation**. The **Enable Accessibility Service** button + the Grant-All flow both jump to that page. Android shows a recurring "has full access to your device" toast while it's on; not suppressible. |
 | `REQUEST_INSTALL_PACKAGES` | `/update` command shows the system install dialog | manifest only — but user must enable **Settings → Apps → a8s Android → Install unknown apps → Allow from this source** once before the dialog will actually install. Without that toggle the prompt appears and is then blocked. |
-| `CAMERA` | `/photo`, `/video` | runtime prompt (added in 1.12.0) |
+| `CAMERA` | `/photo`, `/video` | runtime prompt |
 | `RECORD_AUDIO` | `/video` audio track, `/audio` | runtime prompt |
 | `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` | `/location` | runtime prompt |
 | `READ_MEDIA_IMAGES` / `READ_MEDIA_AUDIO` | scoped media access for `/ls` and `/cat` (API 33+) | runtime prompt |
@@ -306,8 +352,8 @@ merged PRs. Skips if the tag already exists (e.g. someone bypassed the
 PR check via direct push).
 
 **Always bump versionName** in `app/build.gradle.kts` when opening a
-PR. Skip past a reserved version if another PR is open (e.g. PR A took
-1.7.0 → PR B picks 1.8.0).
+PR — normal increment (patch/minor as appropriate). Skip past a reserved
+version if another PR is open (e.g. PR A took 1.7.0 → PR B picks 1.8.0).
 
 ## Workflow / git hygiene
 
@@ -315,17 +361,40 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
   (`feat:`, `fix:`, `chore:`, `ci:`).
 - **Don't stack PRs against non-main branches.** Squash-merging the
   parent leaves the child orphaned on a stale branch with the merge
-  button still active. Always `gh pr create --base main`. (Bug history:
-  PR #2 was lost this way; recovered as PR #3.)
+  button still active. Always `gh pr create --base main`.
 - Squash-merge is the norm here. After merging, sync `main` and delete
   the local branch. Subsequent PRs rebase onto fresh `main`.
+
+## Code style
+
+- **Naming:** classes/objects `PascalCase`, functions/vals `camelCase`,
+  consts `UPPER_SNAKE_CASE`, files match their top-level type
+  (`MqttRoute.kt`). Command handlers are `Cmd<Verb>.kt`.
+- **Pure logic returns sealed-class results**, never throws for expected
+  inputs. The decision function is the unit-test surface; the Android
+  service layer only wires IO to it.
+
+```kotlin
+// ✅ pure, total, unit-testable — bad input is a value, not an exception
+fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
+    val envelope = parseEnvelope(payload)
+        ?: return MqttRoute.ParseError("invalid JSON")
+    if (envelope.to != config.device) return MqttRoute.Drop("not this device")
+    // ...
+}
+
+// ❌ avoid — throws on the network thread, can't be tested without a Context
+fun route(payload: String): MqttRoute = throw IllegalStateException("bad")
+```
 
 ## Known testing patterns
 
 - **Pure-Kotlin first.** Pull decision logic into a top-level function
   returning a sealed-class result (`decideRoute`, `decideCommand`).
   Test the function with `JUnit 5`. Don't try to mock Android framework
-  classes — instead, take a snapshot data class as input.
+  classes — instead, take a snapshot data class as input. Tests assert
+  current behavior and config shapes; they are not a compatibility suite
+  for retired parsers or schemas.
 - **`InfoSnapshot` pattern.** Device info gathering lives in
   `InfoSnapshotter.capture`; pure formatting in `Commands.renderInfo`.
   Tests construct the snapshot directly (`CommandsRenderInfoTest`).
@@ -336,15 +405,28 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
   If a long-line warning fires, prefer breaking the string with
   concatenation across lines rather than disabling the rule.
 
+## Boundaries
+
+- ✅ **Always:** run `./gradlew detekt test :app:compileDebugKotlin`
+  before opening a PR; bump `versionName` in `app/build.gradle.kts`;
+  keep new decision logic pure and unit-tested; `gh pr create --base main`.
+- ⚠️ **Ask first:** adding a dependency; changing the wire envelope
+  shape or config schema; touching CI workflows (`.github/workflows/`),
+  branch protection, or `release.yml`.
+- 🚫 **Never:** commit secrets/credentials (broker passwords live in
+  config the operator loads at runtime, not in the repo); log secrets
+  (the in-app ring is shown on screen and via `/logs`); add a fresh
+  debug keystore (use the committed `app/debug.keystore`); force-push or
+  delete `main`.
+
 ## Common pitfalls
 
 - **Don't log secrets.** Detekt won't catch this; the in-app log ring
   is shown on screen and surfaced via `/logs`.
 - **Don't use `body` on the wire.** It's `content`. Regression test
   exists: `MqttRouteTest::content field is read instead of body`.
-- **Don't publish with `to: "all"`.** That was the legacy outbound
-  shape; it doesn't resolve on the host unless an alias literally
-  named `all` exists. Use the sender agent name from `principals`.
+- **Don't publish with `to: "all"`.** The host won't resolve it unless
+  an alias literally named `all` exists. Address a specific participant.
 - **Don't bypass `PublishDedup`.** Google Messages re-posts
   notifications on thread updates; without dedup the cluster sees N
   copies of the same SMS reply.
