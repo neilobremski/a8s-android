@@ -5,29 +5,82 @@ needs to be productive in this repo without re-deriving everything from
 the source tree. Keep it terse. Update when you learn something a future
 contributor would want to know — especially gotchas that cost you time.
 
+See **Conventions for agents** below before editing docs, tests, or
+opening a PR.
+
+## Conventions for agents
+
+- **Document and test the current system.** `README.md`, this file, unit
+  tests, and PR bodies describe how things work *now*. Do not narrate
+  migration paths, version-cutover callouts, or "formerly / no longer /
+  breaking change in X.Y" unless the user explicitly asks. Git history is
+  the changelog.
+- **Version bumps are routine.** Every merging PR bumps `versionName` in
+  `app/build.gradle.kts` (and ideally `versionCode`). Use normal semver
+  increments (e.g. 1.28 → 1.29). Do not jump to a major version for
+  config or API breaks unless the user explicitly requests it.
+- **Research / postmortem docs** (`*_RESEARCH.md`, `MQTT_COMMAND_DEDUP.md`,
+  `A8S_CLUSTER_INTEGRATION.md`, …) may keep incident context for
+  forensics. Onboarding docs stay present-tense and as-is.
+
 ## What this is
 
 An Android app that bridges the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
 cluster to a phone. Upstream daemon code lives at `~/bin/apps/a8s` on the
 operator machine — see `A8S_CLUSTER_INTEGRATION.md` for how routing, remotes,
-and opaque sub-identities relate to this app. Acts as a participant on the
+and opaque phone-agent SMS forwards relate to this app. Acts as a participant on the
 MQTT topic and:
 
-- **Command-driven model** — phonebook participants issue
-  `/command args` messages; the device executes locally and replies
-  over MQTT. There is no implicit forwarding or SMS gateway behavior.
+- **Command-driven model** — configured agents issue `/command args` to
+  the **device node**; the phone executes locally and replies over MQTT.
+  There is no implicit forwarding or SMS gateway behavior for device-bound
+  non-commands.
+- **Phone-agent bridge** — MQTT `to: <phone-agent>` (a principal with a
+  `phone` field) forwards **opaque SMS**, including slash-prefixed text;
+  nothing is executed locally on that path. Optional `allow_from` on that
+  principal restricts which agents may trigger the forward (literal names
+  or regex patterns such as `knobert-.*`).
 - **Explicit SMS** — `/send <number> <message>`, `/mms <number> <url>`,
   `/reply <number> <text>` (fires cached RCS notification reply action).
 - **SMS/RCS → MQTT** — incoming SMS or intercepted Google Messages RCS
-  notifications publish back to the cluster as if they came from the
-  matched phonebook participant. Media is extracted, uploaded via
+  from a phone principal publishes as `from: <phone-agent>` to
+  `routing.sms_inbound_agent`. Media is extracted, uploaded via
   configured storage services, and attached to the outbound envelope.
-- **Phonebook /commands** — any phonebook participant can issue
-  `/info`, `/logs`, `/send`, `/screenshot`, `/dashboard`, etc. and get a
-  `tell`'d response back. Phonebook membership *is* the privilege; there
-  is no separate `owner`. Non-phonebook senders drop.
+- **Role-gated commands** — principals carry roles; roles define allowed
+  verbs (`*` = all). MQTT to `device` and SMS `/verb` from a phone
+  principal both check role permission. Non-principal senders drop.
 
 Full slash-command catalogue with arg shapes lives in `README.md`.
+
+## Commands
+
+Run from the repo root. Requires `JAVA_HOME`/`ANDROID_HOME` exported (see
+**Build & verification** for one-time toolchain setup).
+
+```bash
+./gradlew detekt test :app:compileDebugKotlin   # pre-push gate — run before every PR
+./gradlew test                                  # unit tests only (host JVM, no emulator)
+./gradlew detekt                                # static analysis only
+./gradlew assembleDebug                         # → app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk   # in-place upgrade
+adb logcat -s A8sAndroid:I A8sService:I         # filtered runtime logs
+```
+
+`detekt test :app:compileDebugKotlin` is the exact command the
+`.githooks/pre-push` hook and CI `verify` job run. If it fails locally,
+the PR will fail.
+
+## Tech stack
+
+- **Language:** Kotlin 1.9.22, JVM target 17.
+- **Build:** Gradle (wrapper) + Android Gradle Plugin 8.2.2.
+- **SDK:** `compileSdk`/`targetSdk` 34, `minSdk` 26.
+- **Key deps:** Paho MQTT v3 `1.2.5` (standalone jar, *not* Paho Android
+  Service), `androidx.security:security-crypto:1.1.0-alpha06`,
+  `androidx.lifecycle:lifecycle-service:2.7.0`, Material `1.11.0`.
+- **Tests:** JUnit Jupiter (JUnit 5) `5.10.2` + `org.json:json` jar
+  (org.json ships with the Android runtime but not the host JVM).
+- **Lint:** detekt `1.23.6` (`detekt.yml` at repo root).
 
 ## Module map (under `app/src/main/java/com/a8s/android/`)
 
@@ -36,15 +89,23 @@ Full slash-command catalogue with arg shapes lives in `README.md`.
 | `A8sAndroid.kt` | `Application` subclass. Owns the static `Config` (parsed from JSON), the in-app log ring (50 lines, surfaced to the UI via `onLogListener`), and `loadConfig`/`saveUri`/`getSavedUri` for SAF persistence. Triggers `requestBatteryOptimizationExclusion` on first launch. |
 | `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds one Paho v3 client per configured remote, wake/wifi locks, `PublishDedup`, `PublishRetryQueue`, the SMS-sent broadcast receiver, and the `MmsObserver`. Routes inbound MQTT via `decideRoute` and dispatches commands via the `asyncCommands` map. Manages auto-update checks (6-hour interval, GitHub Releases API). |
 | `MainActivity.kt` | Tabbed UI (Dashboard / Logs / Setup). The Dashboard tab is a full-screen `WebView` driven by `Dashboard.kt` state. The Logs tab shows the live log ring. The Setup tab has permission grants, configuration loading, and the status panel. Requests dangerous perms via `RequestMultiplePermissions`. |
-| `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent` (modern API; older PDU-extraction path was removed). Forwards to `A8sService.publishIncoming`. |
+| `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent`. Forwards to `A8sService.publishIncoming`. |
 | `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Extracts media via `MediaExtractor` (on a worker thread) and caches the notification's reply action for `/reply`. Forwards to `A8sService.publishIncoming` with optional file attachments. |
 | `BootReceiver.kt` | Re-launches `A8sService` on `BOOT_COMPLETED`. |
-| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Variants: `Command(sender, name, args, files, envelopeId)` / `NotACommand(sender)` / `Drop(reason)` / `ParseError(reason)`. `EnvelopeFile` + `parseEnvelopeFiles` extract inbound `files[]` attachments. **All routing logic lives here so it's unit-testable.** Service layer just dispatches. |
+| `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Handles MQTT **to device only** — agent auth + role gate. Variants: `Command` / `NotACommand` / `Drop` / `ParseError`. |
+| `PhoneAgentRoute.kt` | MQTT **to phone-backed agent** → opaque SMS forward when `from` passes target's `allow_from` (checked before `decideRoute` via `MqttInboundHandler`). |
+| `PrincipalConfig.kt` | `ConfigParser`, `PrincipalRegistry`, `RolePolicy`, `AllowFromMatcher` — strict JSON parse for `roles` + `principals` + `routing`. Pure Kotlin. |
+| `IncomingSmsRouter.kt` | SMS/RCS ingress: phone-principal match, SMS-originated slash commands, fall-through publish as phone agent. |
+| `SmsSlashCommand.kt` | Classify inbound SMS bodies as authorized/forbidden/not-a-command using role policy. |
+| `SmsCommandDelivery.kt` | Phone-agent SMS forward + SMS reply body building (inline storage URLs). |
+| `CmdTell.kt` | `/tell <agent> <message>` — MQTT publish with phone principal as `from`. |
 | `Commands.kt` | Pure formatters for slash-command output. Consumes `InfoSnapshotter.InfoSnapshot` and renders via `renderInfo` / `renderLogs`. Keeps Android-specific gathering out of the formatter so it tests without a Context. |
 | `InfoSnapshotter.kt` | Android-side gatherer for `/info`. `capture(context, config, verbose)` builds `InfoSnapshot` (~150 fields in verbose mode). Field catalogue in `INFO_FIELD_RESEARCH.md`. |
 | `PublishDedup.kt` | Bounded LRU keyed on `<recipient>\|<body>`, default 5-minute window / 100 entries. Stops the duplicate-publish bug from Google Messages re-posting notifications. |
 | `CommandDedup.kt` | Inbound dedup for `/send`, `/reply`, `/mms` before SMS/RCS fires. Two layers: envelope ULID (`id` field) and payload fingerprint (`CmdHelpers.outboundSmsDedupKey`). 5-minute window / 200 entries each. Fixes duplicate texts when upstream MQTT retries allocate fresh ULIDs (issue #36). `gateInboundSmsCommand` is the entry point. |
 | `CommandDispatch.kt` | Thin wrapper: dedup gate + log + delegate to `A8sService.executeCommand`. Extracted to keep `A8sService` under detekt's `LargeClass` limit. |
+| `MqttInboundHandler.kt` | Inbound MQTT dispatch + `TransactionTrace` recording (phone-agent forward, command, drop). |
+| `TransactionTrace.kt` | Bounded transaction ring (100 entries) surfaced via `/trace [N]`. |
 | `PublishRetryQueue.kt` | Per-remote FIFO of failed MQTT publishes. Exponential backoff (1s base, 30s cap, 10 attempts max). `flushOnReconnect` drains on successful connect; `publishFn` retries against any connected client. Unit-tested. |
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
 | `Updater.kt` | `/update` plumbing — fetches GitHub Releases JSON, picks the `a8s-android-*-debug.apk` asset, downloads it, and `compareVersions` to decide if newer. The actual install kicks off via `ACTION_VIEW` + FileProvider in `A8sService.triggerInstallPrompt`. JSON parsing + version compare are unit-tested; HTTP and FileProvider sit in thin Android-only wrappers. |
@@ -74,7 +135,7 @@ Full slash-command catalogue with arg shapes lives in `README.md`.
 | `UiActionReply.kt` | Shared `Cmd*` helper: takes the gesture's text reply and a `kind` label, captures a post-action screenshot via `service.captureScreenshotPng`, and forwards through `service.replyToSender(... files = listOf(png))`. Constants `A11Y_DISABLED_MSG` and `POST_GESTURE_SETTLE_MS` live here. |
 | `SecureConfigStore.kt` | Wraps `androidx.security.crypto.EncryptedSharedPreferences` (Keystore-backed AES-256-GCM). On every successful `loadConfig`, the parsed `remotes` JSON blob is mirrored into `secure_config.xml` so MQTT credentials at rest are ciphertext. Threat model: an attacker abusing `/cat` of our own data dir gets opaque bytes, not the broker password. |
 | `RemoteConfig.kt` | One MQTT remote (transport, broker, topic, username, password). |
-| `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — turns the JSON config into typed `Map<String, RemoteConfig>` + `List<StorageService>`. Accepts both new (`remotes` map) and legacy (singular `remote` block) shapes; rejects unknown spec keys to fail loud on typos. |
+| `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — strict JSON; rejects unknown keys. |
 | `StorageService.kt` | Interface for cross-cluster file backends — `store(file): URL`, `retrieve(url, dest): Bool`. Stateless. |
 | `TempFileOrgService.kt` | First (and currently only) `StorageService` impl. Pure-stdlib `HttpURLConnection` multipart upload + GET-`/download` retrieval. 50 MiB cap to stay well under the upstream's 100 MB hard limit. Per-service opts: `expiry_hours` (1/6/24/48, default 24), `timeout_s` (default 30). |
 
@@ -86,7 +147,7 @@ service layer and is exercised end-to-end on a real phone.
 
 | File | Topic |
 |---|---|
-| `A8S_CLUSTER_INTEGRATION.md` | How the upstream a8s daemon routes over MQTT vs this Android participant; sub-identity / SMS command design (#38) |
+| `A8S_CLUSTER_INTEGRATION.md` | Upstream daemon routing vs this Android participant |
 | `MQTT_COMMAND_DEDUP.md` | Duplicate `/send` from MQTT upstream retries (issue #36) — asymmetric Wi‑Fi, daemon vs Android mitigations |
 | `INFO_FIELD_RESEARCH.md` | `/info` verbose field catalogue |
 | `RCS_RESEARCH.md` | Third-party RCS access limits and workarounds |
@@ -115,9 +176,8 @@ With attachments, `files` is a non-empty array:
 ```
 
 - `id` is **required**. The host's `network.py:316-318` drops envelopes
-  with no/invalid ULID. Use `Ulid.new()`. (Bug history: legacy outbound
-  used `body` instead of `content` and `to: "all"` — both broke routing
-  on the host side. Fixed; do not re-introduce.)
+  with no/invalid ULID. Use `Ulid.new()`. Wire field is `content` (not
+  `body`); do not publish with `to: "all"`.
 - `from` is force-stamped by the host's a8s router on its own outbox
   pass (see `apps/a8s/mailbox.py:526` upstream). On our side, treat
   `from` as the **unforgeable identity** for authorization decisions.
@@ -127,40 +187,49 @@ With attachments, `files` is a non-empty array:
   `storage`). Inbound slash commands parse `files` into
   `MqttRoute.Command.files` for handlers like `/send`.
 
-## Routing decision (decideRoute)
+## Routing decision
 
-Pure function. Order of checks matters — early returns shape the
-contract:
+Two inbound MQTT paths in `A8sService.handleMqttMessage` (order matters):
 
-1. **Self-loopback.** `from == config.device` → `Drop`. Brokers echo our
-   own publishes back to every subscriber on the topic; without this
-   filter we'd re-route them as fresh commands.
+1. **`PhoneAgentRoute.evaluate`** — `to` is a phone-backed principal →
+   opaque SMS when `from` passes that principal's `allow_from` (absent or
+   `[]` = any sender; entries with regex metacharacters match the full
+   sender name). Denied senders drop with trace. Slash content is **not**
+   executed locally.
+2. **`decideRoute`** — `to == config.device` only:
+
+Pure function order (`decideRoute`):
+
+1. **Self-loopback.** `from == config.device` or `from` is a phone-backed
+   principal we publish as → `Drop` (broker echo of our own outbound).
 2. **Missing `to`.** → `Drop`.
-3. **`to != config.device`** → `Drop("not this device")`. The app only
-   processes messages addressed directly to it.
-4. **`to == config.device`** (this device is the recipient):
-   - **Phonebook gate.** `from` must be a phonebook key. Otherwise the
-     envelope drops — non-phonebook senders cannot reach the operator
-     or run commands.
-   - **Slash command.** If `content.startsWith("/")` →
-     `Command(sender, verb, args, files)`. Verb is lowercased; empty verb
-     (`"/   "`) drops. Envelope `files` are parsed and passed through.
-   - **Not a command.** Else → `NotACommand(sender)`. Logged but not
-     acted on — there is no implicit SMS forwarding.
+3. **`to != config.device`** → `Drop("not this device")`.
+4. **`to == config.device`**:
+   - **Agent gate.** `from` must be a configured principal.
+   - **Role gate.** Principal's roles must permit the verb.
+   - **Slash command.** `content.startsWith("/")` → `Command`.
+   - **Not a command.** Else → `NotACommand` (logged, not forwarded).
 
 ## Configuration JSON (`a8s.json`)
 
 ```json
 {
-  "device":   "<this phone's participant name>",
-  "phonebook": { "Clover": "+15550001111", "Gerry": "+15550002222" },
+  "device": "android-pixel-7",
+  "roles": {
+    "owner": { "commands": ["*"] }
+  },
+  "principals": [
+    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"], "allow_from": ["knobert", "knobert-.*"] },
+    { "agent": "knobert", "roles": ["owner"] }
+  ],
+  "routing": { "sms_inbound_agent": "knobert" },
   "remotes": {
     "hivemq": {
       "transport": "mqtt",
-      "broker":    "ssl://broker:8883",
-      "topic":     "...",
-      "username":  "...",
-      "password":  "..."
+      "broker": "ssl://broker:8883",
+      "topic": "...",
+      "username": "...",
+      "password": "..."
     }
   },
   "services": {
@@ -174,10 +243,15 @@ contract:
 }
 ```
 
-The pre-1.16.0 `forward` and `owner` keys are dropped on parse with a
-startup warning. Phonebook membership is the single auth gate, and
-`phonebook[from]` is the per-sender forward target. The MQTT
-credentials are persisted encrypted-at-rest via `SecureConfigStore`.
+**Parse rules:** unknown top-level keys are rejected. `device` must not
+equal any `principals[].agent`. `routing.sms_inbound_agent` must name a
+configured principal (not `device`). An `owner` role is required in `roles`.
+Optional `allow_from` on a phone principal: literal agent names must be
+configured principals (not `device` or self); entries with regex
+metacharacters compile as full-name patterns (invalid regex rejected at
+load).
+
+MQTT credentials are persisted encrypted-at-rest via `SecureConfigStore`.
 
 **Multiple remotes** — `remotes` is a map; each entry gets its own
 paho client, subscriber thread, and reconnect loop. Outbound publishes
@@ -193,20 +267,16 @@ implemented. Active paths: outbound uploads (`/screenshot`, `/photo`,
 inbound retrieval (`/download`, `/mms`, `/dashboard bg`). `/screenshot`
 requires at least one configured service.
 
-**Backwards compatibility (1.9.0 → 1.10.0):** the parser also accepts
-the legacy singular `"remote"` block (with `"url"` instead of
-`"broker"`) and wraps it as `remotes: { "default": ... }`. Lets an
-in-place `/update` not require the user to rewrite the config first.
-
 - The user picks the file via Storage Access Framework; the URI is
   persisted (`takePersistableUriPermission`) so reloads work post-reboot.
   The **Permanently delete source file after loading** checkbox in
   `MainActivity` does a best-effort secure delete (zero-overwrite then
   SAF delete) of the picked file after the parse succeeds; per-launch
   state, default unchecked.
-- `phonebook` plays two roles: (a) inbound reverse-lookup naming the
-  publisher on SMS→MQTT; (b) auth gate — only phonebook senders can
-  reach `device` and run commands.
+- **`principals`** with `phone` match inbound SMS/RCS by normalized
+  digits; fall-through publishes as the phone agent, not `device`.
+- **Remote agents** (no `phone`, e.g. `knobert`) send MQTT commands to
+  `device` but are not treated as self-loopback.
 
 ## Permissions
 
@@ -214,12 +284,12 @@ in-place `/update` not require the user to rewrite the config first.
 |---|---|---|
 | `SEND_SMS` / `RECEIVE_SMS` / `READ_SMS` | gateway IO | runtime prompt on launch |
 | `READ_PHONE_STATE` | required for SMS APIs | runtime prompt |
-| `READ_CONTACTS` | resolve RCS notification's contact display name → phone number for the phonebook lookup | runtime prompt |
+| `READ_CONTACTS` | resolve RCS notification's contact display name → phone number for principal phone matching | runtime prompt |
 | `POST_NOTIFICATIONS` | foreground service notification on API 33+ | runtime prompt (gated on `>= TIRAMISU`) |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | RCS interception | special — Settings → Notification access (manifest declares it; the **Open Notification Access** button in MainActivity opens the page) |
 | `BIND_ACCESSIBILITY_SERVICE` | UI automation (`/tap`, `/swipe`, `/macro`, …) | special — declared on the `<service>` element only (signature-protected, no `<uses-permission>`); user toggles it on in **Settings → Accessibility → Installed services → a8s Automation**. The **Enable Accessibility Service** button + the Grant-All flow both jump to that page. Android shows a recurring "has full access to your device" toast while it's on; not suppressible. |
 | `REQUEST_INSTALL_PACKAGES` | `/update` command shows the system install dialog | manifest only — but user must enable **Settings → Apps → a8s Android → Install unknown apps → Allow from this source** once before the dialog will actually install. Without that toggle the prompt appears and is then blocked. |
-| `CAMERA` | `/photo`, `/video` | runtime prompt (added in 1.12.0) |
+| `CAMERA` | `/photo`, `/video` | runtime prompt |
 | `RECORD_AUDIO` | `/video` audio track, `/audio` | runtime prompt |
 | `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` | `/location` | runtime prompt |
 | `READ_MEDIA_IMAGES` / `READ_MEDIA_AUDIO` | scoped media access for `/ls` and `/cat` (API 33+) | runtime prompt |
@@ -292,8 +362,8 @@ merged PRs. Skips if the tag already exists (e.g. someone bypassed the
 PR check via direct push).
 
 **Always bump versionName** in `app/build.gradle.kts` when opening a
-PR. Skip past a reserved version if another PR is open (e.g. PR A took
-1.7.0 → PR B picks 1.8.0).
+PR — normal increment (patch/minor as appropriate). Skip past a reserved
+version if another PR is open (e.g. PR A took 1.7.0 → PR B picks 1.8.0).
 
 ## Workflow / git hygiene
 
@@ -301,17 +371,40 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
   (`feat:`, `fix:`, `chore:`, `ci:`).
 - **Don't stack PRs against non-main branches.** Squash-merging the
   parent leaves the child orphaned on a stale branch with the merge
-  button still active. Always `gh pr create --base main`. (Bug history:
-  PR #2 was lost this way; recovered as PR #3.)
+  button still active. Always `gh pr create --base main`.
 - Squash-merge is the norm here. After merging, sync `main` and delete
   the local branch. Subsequent PRs rebase onto fresh `main`.
+
+## Code style
+
+- **Naming:** classes/objects `PascalCase`, functions/vals `camelCase`,
+  consts `UPPER_SNAKE_CASE`, files match their top-level type
+  (`MqttRoute.kt`). Command handlers are `Cmd<Verb>.kt`.
+- **Pure logic returns sealed-class results**, never throws for expected
+  inputs. The decision function is the unit-test surface; the Android
+  service layer only wires IO to it.
+
+```kotlin
+// ✅ pure, total, unit-testable — bad input is a value, not an exception
+fun decideRoute(payload: String, config: A8sAndroid.Config): MqttRoute {
+    val envelope = parseEnvelope(payload)
+        ?: return MqttRoute.ParseError("invalid JSON")
+    if (envelope.to != config.device) return MqttRoute.Drop("not this device")
+    // ...
+}
+
+// ❌ avoid — throws on the network thread, can't be tested without a Context
+fun route(payload: String): MqttRoute = throw IllegalStateException("bad")
+```
 
 ## Known testing patterns
 
 - **Pure-Kotlin first.** Pull decision logic into a top-level function
   returning a sealed-class result (`decideRoute`, `decideCommand`).
   Test the function with `JUnit 5`. Don't try to mock Android framework
-  classes — instead, take a snapshot data class as input.
+  classes — instead, take a snapshot data class as input. Tests assert
+  current behavior and config shapes; they are not a compatibility suite
+  for retired parsers or schemas.
 - **`InfoSnapshot` pattern.** Device info gathering lives in
   `InfoSnapshotter.capture`; pure formatting in `Commands.renderInfo`.
   Tests construct the snapshot directly (`CommandsRenderInfoTest`).
@@ -322,15 +415,28 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
   If a long-line warning fires, prefer breaking the string with
   concatenation across lines rather than disabling the rule.
 
+## Boundaries
+
+- ✅ **Always:** run `./gradlew detekt test :app:compileDebugKotlin`
+  before opening a PR; bump `versionName` in `app/build.gradle.kts`;
+  keep new decision logic pure and unit-tested; `gh pr create --base main`.
+- ⚠️ **Ask first:** adding a dependency; changing the wire envelope
+  shape or config schema; touching CI workflows (`.github/workflows/`),
+  branch protection, or `release.yml`.
+- 🚫 **Never:** commit secrets/credentials (broker passwords live in
+  config the operator loads at runtime, not in the repo); log secrets
+  (the in-app ring is shown on screen and via `/logs`); add a fresh
+  debug keystore (use the committed `app/debug.keystore`); force-push or
+  delete `main`.
+
 ## Common pitfalls
 
 - **Don't log secrets.** Detekt won't catch this; the in-app log ring
   is shown on screen and surfaced via `/logs`.
 - **Don't use `body` on the wire.** It's `content`. Regression test
   exists: `MqttRouteTest::content field is read instead of body`.
-- **Don't publish with `to: "all"`.** That was the legacy outbound
-  shape; it doesn't resolve on the host unless an alias literally
-  named `all` exists. Use the matched phonebook participant name.
+- **Don't publish with `to: "all"`.** The host won't resolve it unless
+  an alias literally named `all` exists. Address a specific participant.
 - **Don't bypass `PublishDedup`.** Google Messages re-posts
   notifications on thread updates; without dedup the cluster sees N
   copies of the same SMS reply.
@@ -338,9 +444,11 @@ PR. Skip past a reserved version if another PR is open (e.g. PR A took
   `/reply`, and `/mms` must pass through `CommandDispatch` /
   `gateInboundSmsCommand` before queuing SMS — upstream MQTT retries with
   fresh ULIDs will otherwise deliver duplicate texts.
-- **Don't trust the `from` without checking the phonebook.** Phonebook
-  membership is the single auth gate for self-addressed envelopes.
-  Non-phonebook senders are dropped before any command processing.
+- **Don't trust `from` without principal + role checks.** Non-principals
+  are dropped before command processing on the device path.
+- **Don't execute slash commands on phone-agent MQTT.** `PhoneAgentRoute`
+  forwards opaque SMS; only `to == device` runs commands. Check
+  `allow_from` when a phone principal should reject unknown senders.
 - **Don't add a fresh debug keystore.** Let the committed
   `app/debug.keystore` sign every build, or in-place upgrades break.
 - **Don't assume MQTT publish succeeded.** `publishToAllRemotes` queues

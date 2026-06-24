@@ -1,5 +1,10 @@
 # a8s cluster integration — upstream daemon & Android bridge
 
+> **Note (v1.29.0):** Android config now uses `principals` + `roles` +
+> `routing` instead of `phonebook` / `text-<digits>` sub-identities.
+> See `README.md` and `AGENTS.md` for the current model. Sections below
+> describing sub-identity / phonebook are historical context for #38.
+
 How the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
 daemon routes messages over MQTT, and how **a8s-android** participates as a
 remote cluster node. Written for future agents and developers working on

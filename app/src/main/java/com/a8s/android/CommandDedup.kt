@@ -100,15 +100,14 @@ fun gateSmsOriginCommand(participant: String, body: String): Boolean =
         payloadKey = "smsorigin|$participant|${body.trim()}",
     )
 
-private val subIdentityForwardDedup = CommandDedup()
+private val phoneAgentForwardDedup = CommandDedup()
 
 /**
- * Dedup for inbound sub-identity envelopes forwarded to the operator's
- * SMS. Stops broker redelivery / upstream retries from amplifying into
- * multiple texts. Keyed on envelope ULID plus destination + content.
+ * Dedup for inbound phone-agent envelopes forwarded to SMS. Stops broker
+ * redelivery / upstream retries from amplifying into multiple texts.
  */
-fun gateSubIdentityForward(envelopeId: String, smsTo: String, content: String): Boolean =
-    subIdentityForwardDedup.shouldExecute(
+fun gatePhoneAgentForward(envelopeId: String, targetAgent: String, content: String): Boolean =
+    phoneAgentForwardDedup.shouldExecute(
         envelopeId = envelopeId,
-        payloadKey = "subfwd|${PhoneNormalize.normalizePhoneDigits(smsTo)}|${content.trim()}",
+        payloadKey = "phonefwd|$targetAgent|${content.trim()}",
     )

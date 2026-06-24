@@ -580,12 +580,15 @@ class MainActivity : AppCompatActivity() {
                 if (rest > 0) sb.append(" (+").append(rest).append(" more)")
                 sb.append("\n")
             }
-            if (config.phonebook.isEmpty()) {
-                sb.append("Phonebook: (empty)\n")
+            if (config.registry.localAgents.isEmpty()) {
+                sb.append("Principals: (empty)\n")
             } else {
-                val (firstName, firstNumber) = config.phonebook.entries.first().toPair()
-                val rest = config.phonebook.size - 1
-                sb.append("Phonebook: ").append(firstName).append(" -> ").append(firstNumber)
+                val agents = config.registry.localAgents.sorted()
+                val first = agents.first()
+                val rest = agents.size - 1
+                val phone = config.registry.phoneForAgent(first)
+                sb.append("Principals: ").append(first)
+                if (phone != null) sb.append(" (").append(phone).append(")")
                 if (rest > 0) sb.append(" (+").append(rest).append(" more)")
                 sb.append("\n")
             }

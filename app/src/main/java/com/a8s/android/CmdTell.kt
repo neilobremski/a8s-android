@@ -2,7 +2,7 @@ package com.a8s.android
 
 /**
  * `/tell <agent> <message>` — publish an a8s envelope over MQTT using the
- * operator's opaque SMS sub-identity as `from` (issue #38).
+ * operator's phone principal as `from`.
  */
 object CmdTell {
 
@@ -12,21 +12,19 @@ object CmdTell {
             service.replyToSender(config, cmd, "usage: /tell <agent> <message>")
             return
         }
-        val replyNumber = cmd.smsReplyTo
-        if (replyNumber.isNullOrBlank()) {
-            service.replyToSender(config, cmd, "tell failed: SMS origin required for sub-identity")
+        if (cmd.smsReplyTo.isNullOrBlank()) {
+            service.replyToSender(config, cmd, "tell failed: SMS origin required (phone principal)")
             return
         }
-        val fromIdentity = try {
-            PhoneNormalize.buildSmsSubIdentity(config.tellPrefix, replyNumber)
-        } catch (e: IllegalArgumentException) {
-            service.replyToSender(config, cmd, "tell failed: ${e.message}")
+        val fromAgent = cmd.sender
+        if (!config.registry.isPhoneAgent(fromAgent)) {
+            service.replyToSender(config, cmd, "tell failed: sender is not a phone-backed agent")
             return
         }
-        val (ok, fail) = service.publishEnvelope(fromIdentity, parts.agent, parts.message)
+        val (ok, fail) = service.publishEnvelope(fromAgent, parts.agent, parts.message)
         service.replyToSender(
             config, cmd,
-            "tell $fromIdentity -> ${parts.agent}: ${service.preview(parts.message)} " +
+            "tell $fromAgent -> ${parts.agent}: ${service.preview(parts.message)} " +
                 "(${ok}/${ok + fail} remotes)",
         )
     }

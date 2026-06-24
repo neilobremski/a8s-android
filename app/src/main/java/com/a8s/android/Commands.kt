@@ -190,7 +190,7 @@ object Commands {
 
     private fun renderConfigLine(b: StringBuilder, s: InfoSnapshotter.InfoSnapshot) {
         b.append("Config: ")
-        b.append("phonebook=${s.phonebookSize}")
+        b.append("principals=${s.principalCount}")
         b.append("\n")
     }
 
@@ -406,6 +406,10 @@ object Commands {
         if (args.isEmpty()) return default
         return args[0].toIntOrNull() ?: default
     }
+
+    /** Same clamp as logs: [1, 500]. */
+    fun parseTraceArgs(args: List<String>, default: Int = DEFAULT_LOGS_LINES): Int =
+        parseLogsArgs(args, default)
 
     fun renderUnknown(name: String): String =
         "unknown command: /$name\n" +

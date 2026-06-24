@@ -5,20 +5,12 @@ import org.json.JSONObject
 data class EnvelopeFile(val filename: String, val storageUrls: List<String>)
 
 sealed class MqttRoute {
-    /**
-     * The paired owner has issued a `/command` to the device. `name`
-     * is the bare verb (e.g. "info"), `args` is whatever followed split on
-     * whitespace. `sender` is the participant name from the envelope's
-     * `from` field — force-stamped by the host's a8s router.
-     */
     data class Command(
         val sender: String,
         val name: String,
         val args: List<String>,
         val files: List<EnvelopeFile> = emptyList(),
-        /** a8s envelope `id` (ULID). Used for idempotent SMS-style commands. */
         val envelopeId: String = "",
-        /** When set, command replies go to this number via SMS instead of MQTT. */
         val smsReplyTo: String? = null,
     ) : MqttRoute()
     data class NotACommand(val sender: String) : MqttRoute()
@@ -52,35 +44,28 @@ fun decideRoute(json: JSONObject, config: A8sAndroid.Config): MqttRoute {
         return MqttRoute.Drop("to=$to is not this device (${config.device})")
     }
 
-    if (from !in config.phonebook.keys) {
-        return MqttRoute.Drop("from=$from not in phonebook")
+    if (config.registry.principalByAgent(from) == null) {
+        return MqttRoute.Drop("from=$from not a configured agent")
     }
     if (content.startsWith("/")) {
         val (name, args) = parseSlashTokens(content)
             ?: return MqttRoute.Drop("empty command from sender=$from")
+        if (!config.registry.allowsCommandByAgent(from, name)) {
+            return MqttRoute.Drop("from=$from not permitted to run /$name")
+        }
         return MqttRoute.Command(from, name, args, parseEnvelopeFiles(json), json.optString("id"))
     }
     return MqttRoute.NotACommand(from)
 }
 
-/**
- * Single source of truth for "this envelope came from us". Covers both
- * the device participant name and any of our SMS sub-identities — used
- * by [decideRoute] and [SubIdentityRoute] so the loopback rule can't
- * drift between the two paths.
- */
+/** Envelope `from` is this device node or a phone-backed agent we publish as. */
 fun isSelfOrigin(from: String, config: A8sAndroid.Config): Boolean {
     val f = from.trim()
     if (f.isEmpty()) return false
-    return f == config.device ||
-        PhoneNormalize.isOwnSubIdentity(f, config.tellPrefix, config.phonebook)
+    if (f == config.device) return true
+    return config.registry.isPhoneAgent(f)
 }
 
-/**
- * Split a `/verb arg arg` string into a lowercased verb + args. Shared
- * by [decideRoute] (MQTT) and [SmsSlashCommand] (SMS) so the parse can't
- * diverge. Returns null when there is no verb.
- */
 fun parseSlashTokens(content: String): Pair<String, List<String>>? {
     val tokens = content.removePrefix("/").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
     if (tokens.isEmpty()) return null

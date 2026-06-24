@@ -3,89 +3,46 @@ package com.a8s.android
 import org.json.JSONObject
 
 /**
- * JSON → typed remotes + services. Pure Kotlin (no Android dependencies)
- * so it stays unit-testable.
- *
- * The new shape (1.10.0+) matches `apps/a8s/network.json` upstream:
- * ```
- * "remotes":  { "<name>": { "transport": "mqtt", "broker": "...",
- *                            "topic": "...", "username": "...",
- *                            "password": "..." } },
- * "services": { "<name>": { "service": "tempfile_org",
- *                            "url": "...",
- *                            "expiry_hours": 24 } }
- * ```
- *
- * Legacy shape (≤ 1.9.0) had a singular flat `remote` object. We accept
- * it as an alias and wrap it as `remotes: { "default": ... }` so an
- * in-place upgrade doesn't require the user to rewrite the config
- * file before tapping `/update`.
+ * JSON → typed remotes + services. Pure Kotlin (no Android dependencies).
  */
 object Network {
 
-    // Reserved keys the dispatcher consumes itself; everything else
-    // forwards to the per-transport / per-service constructor as opts.
-    private val REMOTE_RESERVED = setOf("transport", "broker", "url", "topic")
+    private val REMOTE_RESERVED = setOf("transport", "broker", "topic")
     private val SERVICE_RESERVED = setOf("service", "url")
 
-    /** Parse the `remotes` map (new) or wrap a legacy `remote` block.
-     *  Returns insertion-ordered map keyed by remote name. Throws on
-     *  shape errors that prevent constructing any remote (caller's
-     *  caller logs and continues). */
     fun parseRemotes(root: JSONObject): Map<String, RemoteConfig> {
         val out = linkedMapOf<String, RemoteConfig>()
-        val remotesObj = root.optJSONObject("remotes")
-        val singleObj = root.optJSONObject("remote")
-        when {
-            remotesObj != null -> {
-                val keys = remotesObj.keys()
-                while (keys.hasNext()) {
-                    val name = keys.next()
-                    val spec = remotesObj.optJSONObject(name) ?: continue
-                    parseRemoteSpec(spec)?.let { out[name] = it }
-                }
-            }
-            singleObj != null -> {
-                parseRemoteSpec(singleObj)?.let { out["default"] = it }
-            }
+        val remotesObj = root.getJSONObject("remotes")
+        val keys = remotesObj.keys()
+        while (keys.hasNext()) {
+            val name = keys.next()
+            val spec = remotesObj.getJSONObject(name)
+            parseRemoteSpec(spec)?.let { out[name] = it }
         }
         return out
     }
 
-    /** Parse the `services` map into typed [StorageService]s. Unknown
-     *  service kinds throw; callers should report the issue (and let
-     *  the rest of the config load). */
     fun parseServices(root: JSONObject): List<StorageService> {
         val obj = root.optJSONObject("services") ?: return emptyList()
         val out = mutableListOf<StorageService>()
         val keys = obj.keys()
         while (keys.hasNext()) {
             val name = keys.next()
-            val spec = obj.optJSONObject(name) ?: continue
+            val spec = obj.getJSONObject(name)
             out += buildService(name, spec)
         }
         return out
     }
 
     private fun parseRemoteSpec(spec: JSONObject): RemoteConfig? {
-        // Accept both the canonical `broker` (Python) and legacy `url`
-        // (the old singular shape). One of them is required.
-        val broker = spec.optString("broker").ifBlank { spec.optString("url") }
+        val broker = spec.getString("broker")
         if (broker.isBlank()) return null
-        val topic = spec.optString("topic")
+        val topic = spec.getString("topic")
         if (topic.isBlank()) return null
         val transport = spec.optString("transport").ifBlank { "mqtt" }
-        // `user`/`pass` are aliased forms accepted by the Python config
-        // dispatcher; honor them too.
-        val username = spec.optString("username")
-            .ifBlank { spec.optString("user") }
-            .ifBlank { null }
-        val password = spec.optString("password")
-            .ifBlank { spec.optString("pass") }
-            .ifBlank { null }
-        // Reject unknown keys so a typo in the JSON fails loud rather
-        // than silently doing nothing.
-        rejectUnknownKeys(spec, REMOTE_RESERVED + setOf("username", "user", "password", "pass"))
+        val username = spec.optString("username").ifBlank { null }
+        val password = spec.optString("password").ifBlank { null }
+        rejectUnknownKeys(spec, REMOTE_RESERVED + setOf("username", "password"))
         return RemoteConfig(
             transport = transport,
             broker = broker,
@@ -96,8 +53,8 @@ object Network {
     }
 
     private fun buildService(name: String, spec: JSONObject): StorageService {
-        val kind = spec.optString("service").trim().lowercase()
-        val url = spec.optString("url")
+        val kind = spec.getString("service").trim().lowercase()
+        val url = spec.getString("url")
         require(url.isNotBlank()) { "storage $name: missing 'url'" }
         return when (kind) {
             "tempfile_org" -> {
@@ -110,32 +67,6 @@ object Network {
                 "storage $name: unsupported service kind '$kind' (known: tempfile_org)",
             )
         }
-    }
-
-    private val SMS_COMMAND_RESERVED = setOf("tell_prefix", "allowed_commands")
-
-    /** Optional `sms_command.tell_prefix` (default `text`). */
-    fun parseTellPrefix(root: JSONObject): String {
-        val obj = root.optJSONObject("sms_command") ?: return PhoneNormalize.DEFAULT_TELL_PREFIX
-        val prefix = obj.optString("tell_prefix", PhoneNormalize.DEFAULT_TELL_PREFIX).trim()
-        rejectUnknownKeys(obj, SMS_COMMAND_RESERVED)
-        return prefix.ifEmpty { PhoneNormalize.DEFAULT_TELL_PREFIX }
-    }
-
-    /**
-     * Optional `sms_command.allowed_commands` — JSON array of verb names
-     * (without the leading `/`), or `["*"]` to allow every verb. Defaults
-     * to the safe subset in [SmsCommandPolicy.DEFAULT_ALLOWED].
-     */
-    fun parseSmsAllowedCommands(root: JSONObject): Set<String> {
-        val obj = root.optJSONObject("sms_command") ?: return SmsCommandPolicy.DEFAULT_ALLOWED
-        val arr = obj.optJSONArray("allowed_commands") ?: return SmsCommandPolicy.DEFAULT_ALLOWED
-        val out = mutableSetOf<String>()
-        for (i in 0 until arr.length()) {
-            val verb = arr.optString(i).trim()
-            if (verb.isNotEmpty()) out += if (verb == SmsCommandPolicy.WILDCARD) verb else verb.removePrefix("/").lowercase()
-        }
-        return if (out.isEmpty()) SmsCommandPolicy.DEFAULT_ALLOWED else out
     }
 
     private fun rejectUnknownKeys(spec: JSONObject, allowed: Set<String>) {

@@ -64,11 +64,12 @@ class FileDownloaderTest {
     }
 
     @Test
-    fun `no storage URLs yields null file and null fallback`() {
+    fun `no storage URLs yields NO_URLS outcome`() {
         val files = listOf(EnvelopeFile("local.txt", emptyList()))
         val results = FileDownloader.downloadFiles(files, emptyList(), tempDir)
         assertNull(results[0].file)
         assertNull(results[0].fallbackUrl)
+        assertEquals(FileDownloader.DownloadOutcome.NO_URLS, results[0].outcome)
     }
 
     @Test

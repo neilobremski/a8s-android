@@ -54,9 +54,9 @@ class CommandDedupTest {
     }
 
     @Test
-    fun `gateSubIdentityForward dedups same envelope`() {
+    fun `gatePhoneAgentForward dedups same envelope`() {
         val id = "01KTVEBX9HA8ZHMH5BP2EA38${System.nanoTime() % 100}"
-        assertTrue(gateSubIdentityForward(id, "+13602196756", "hi"))
-        assertFalse(gateSubIdentityForward(id, "+13602196756", "hi"))
+        assertTrue(gatePhoneAgentForward(id, "neil-phone", "/logs"))
+        assertFalse(gatePhoneAgentForward(id, "neil-phone", "/logs"))
     }
 }
