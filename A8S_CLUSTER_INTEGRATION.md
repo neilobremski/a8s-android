@@ -5,8 +5,8 @@
 > See `README.md` and `AGENTS.md` for the current model. Sections below
 > describing sub-identity / phonebook are historical context for #38.
 
-How the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
-daemon routes messages over MQTT, and how **a8s-android** participates as a
+How the **a8s (Agent Infinity System)** upstream cluster routes messages
+over MQTT, and how **a8s-android** participates as a
 remote cluster node. Written for future agents and developers working on
 either side of the wire.
 
@@ -100,7 +100,7 @@ except KeyError:
 ```
 
 So **`to` can be any string** — including names that only exist on another
-cluster (e.g. an Android `device` name, or a planned `text-360-219-6756`
+cluster (e.g. an Android `device` name, or a planned `text-555-123-4567`
 sub-identity). If the sending machine doesn't know that name, it still
 **fans out to all configured remotes** (README, “Remotes” section).
 
@@ -134,8 +134,8 @@ topic** (`network.start_remotes`). Incoming bytes hit
 
 This is why **arbitrary participant names work** for cross-cluster traffic:
 
-- Linux daemon tells `text-360-219-6756` → not in local registry → **published to MQTT**
-- Other Linux daemons receive it → `text-360-219-6756` not local → **dropped**
+- Linux daemon tells `text-555-123-4567` → not in local registry → **published to MQTT**
+- Other Linux daemons receive it → `text-555-123-4567` not local → **dropped**
 - Android receives it → **matches sub-identity handler** (planned #38) → SMS forward
 
 No per-agent MQTT topics. Everyone shares one `topic`; **routing is by
@@ -191,7 +191,7 @@ Inbound SMS does **not** execute slash commands locally today (issue #38).
 
 ## Planned: SMS commands & opaque sub-identity (#38)
 
-Tracked in [GitHub issue #38](https://github.com/neilobremski/a8s-android/issues/38).
+Tracked in issue #38.
 
 ### Phase 1 — SMS → local command
 
@@ -204,7 +204,7 @@ Operator texts `/tell Bob hello`. Phone publishes:
 
 ```json
 {
-  "from": "text-13602196756",
+  "from": "text-15551234567",
   "to": "Bob",
   "content": "hello",
   "id": "<new ULID>"
@@ -213,9 +213,9 @@ Operator texts `/tell Bob hello`. Phone publishes:
 
 - `from` uses configurable prefix + normalized operator number — **not**
   `config.device` (keeps the real device name off the network)
-- Upstream daemons don't know `text-13602196756` → publish to MQTT on
+- Upstream daemons don't know `text-15551234567` → publish to MQTT on
   send; **drop silently** on receive — **no registration required**
-- Android filters `to == text-13602196756` → forward `content` + `files[]`
+- Android filters `to == text-15551234567` → forward `content` + `files[]`
   to operator via SMS (same attachment handling as `/send`)
 
 ```mermaid
@@ -227,11 +227,11 @@ sequenceDiagram
     participant Bob as Agent Bob
 
     Phone->>And: SMS /tell Bob hello
-    And->>MQTT: from text-13602196756 to Bob
+    And->>MQTT: from text-15551234567 to Bob
     MQTT->>Daemon: envelope unknown to
     Note over Daemon: resolve_name fails, drop
     MQTT->>Bob: envelope if Bob on cluster
-    Bob->>MQTT: from Bob to text-13602196756
+    Bob->>MQTT: from Bob to text-15551234567
     MQTT->>Daemon: envelope unknown to
     Note over Daemon: drop silently
     MQTT->>And: envelope
@@ -257,21 +257,21 @@ and converge call sites.)
 **Planned helper** (pure Kotlin, unit-tested):
 
 ```kotlin
-/** Digits only — e.g. "+1 (360) 219-6756" → "13602196756" */
+/** Digits only — e.g. "+1 (555) 123-4567" → "15551234567" */
 fun normalizePhoneDigits(raw: String): String
 
-/** MQTT participant alias for SMS-origin /tell — e.g. prefix "text" → "text-13602196756" */
+/** MQTT participant alias for SMS-origin /tell — e.g. prefix "text" → "text-15551234567" */
 fun buildSmsSubIdentity(prefix: String, phoneNumber: String): String
 ```
 
 | Input | `normalizePhoneDigits` | `buildSmsSubIdentity("text", …)` |
 |---|---|---|
-| `+1 360-219-6756` | `13602196756` | `text-13602196756` |
-| `3602196756` | `3602196756` | `text-3602196756` |
+| `+1 555-123-4567` | `15551234567` | `text-15551234567` |
+| `5551234567` | `5551234567` | `text-5551234567` |
 
 Country code is preserved when present in the source string (the leading
 `1` is a digit). **Do not** insert decorative dashes into the wire id
-(`text-1360-219-6756` is not the canonical form).
+(`text-1555-123-4567` is not the canonical form).
 
 `tell_prefix` is configurable per device (default `text`). One sub-identity
 per **operator phone number** that is authorized for SMS commands (see below).
@@ -365,7 +365,7 @@ operator” on the shared topic.
 
 Implications:
 
-- Bob (or anyone who learns the opaque id) can `tell text-13602196756 …`
+- Bob (or anyone who learns the opaque id) can `tell text-15551234567 …`
   at any time and the phone will SMS it to the operator — same as knowing
   any participant name on the cluster.
 - No timer or “session end” state to manage in the app.
@@ -433,8 +433,8 @@ See **`MQTT_COMMAND_DEDUP.md`** for the postmortem and Android mitigations.
 
 | Reference | Topic |
 |---|---|
-| [issue #38](https://github.com/neilobremski/a8s-android/issues/38) | SMS-originated commands + `/tell` sub-identity |
-| [issue #36](https://github.com/neilobremski/a8s-android/issues/36) | Duplicate `/send` from MQTT retries |
+| issue #38 | SMS-originated commands + `/tell` sub-identity |
+| issue #36 | Duplicate `/send` from MQTT retries |
 | `MQTT_COMMAND_DEDUP.md` | Android dedup postmortem |
 | `AGENTS.md` | Agent onboarding for this repo |
 | `~/bin/apps/a8s/README.md` | Canonical a8s documentation |

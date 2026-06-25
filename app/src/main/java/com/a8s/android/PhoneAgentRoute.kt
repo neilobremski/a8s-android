@@ -3,7 +3,7 @@ package com.a8s.android
 import org.json.JSONObject
 
 /**
- * Inbound MQTT envelopes addressed to a phone-backed agent (e.g. `neil-phone`).
+ * Inbound MQTT envelopes addressed to a phone-backed agent (e.g. `operator-phone`).
  * Content is forwarded to SMS **opaquely** — even `/logs` is not executed locally.
  */
 object PhoneAgentRoute {

@@ -9,13 +9,13 @@ class PhoneNormalizeTest {
 
     @Test
     fun `normalizePhoneDigits strips formatting`() {
-        assertEquals("13602196756", PhoneNormalize.normalizePhoneDigits("+1 360-219-6756"))
+        assertEquals("15551234567", PhoneNormalize.normalizePhoneDigits("+1 555-123-4567"))
     }
 
     @Test
     fun `phoneDigitsMatch handles country-code suffix`() {
-        assertTrue(PhoneNormalize.phoneDigitsMatch("3602196756", "+13602196756"))
-        assertTrue(PhoneNormalize.phoneDigitsMatch("+13602196756", "3602196756"))
+        assertTrue(PhoneNormalize.phoneDigitsMatch("5551234567", "+15551234567"))
+        assertTrue(PhoneNormalize.phoneDigitsMatch("+15551234567", "5551234567"))
     }
 
     @Test
@@ -25,7 +25,7 @@ class PhoneNormalizeTest {
 
     @Test
     fun `phoneDigitsMatch refuses short suffix collisions`() {
-        assertFalse(PhoneNormalize.phoneDigitsMatch("6756", "+13602196756"))
+        assertFalse(PhoneNormalize.phoneDigitsMatch("4567", "+15551234567"))
     }
 
     @Test
@@ -35,6 +35,6 @@ class PhoneNormalizeTest {
 
     @Test
     fun `maskNumber hides all but last four digits`() {
-        assertEquals("••••6756", PhoneNormalize.maskNumber("+13602196756"))
+        assertEquals("••••4567", PhoneNormalize.maskNumber("+15551234567"))
     }
 }

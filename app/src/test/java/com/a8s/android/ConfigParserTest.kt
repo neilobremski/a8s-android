@@ -14,8 +14,8 @@ class ConfigParserTest {
         val cfg = TestFixtures.config()
         assertEquals("android-pixel-7", cfg.device)
         assertEquals(2, cfg.registry.localAgents.size)
-        assertEquals("knobert", cfg.routing.smsInboundAgent)
-        assertEquals("+13602196756", cfg.registry.phoneForAgent("neil-phone"))
+        assertEquals("alice", cfg.routing.smsInboundAgent)
+        assertEquals("+15551234567", cfg.registry.phoneForAgent("operator-phone"))
     }
 
     @Test
@@ -73,20 +73,20 @@ class ConfigParserTest {
         val cfg = TestFixtures.config(
             principalsJson = """
                 [
-                  {"agent":"knobert","roles":["owner"]},
+                  {"agent":"alice","roles":["owner"]},
                   {
-                    "agent":"neil-phone",
-                    "phone":"+13602196756",
+                    "agent":"operator-phone",
+                    "phone":"+15551234567",
                     "roles":["owner"],
-                    "allow_from":["knobert"]
+                    "allow_from":["alice"]
                   }
                 ]
             """.trimIndent(),
         )
-        val p = cfg.registry.principalByAgent("neil-phone")!!
-        assertEquals(listOf("knobert"), p.allowFrom?.map { it.source })
-        assertTrue(cfg.registry.allowsPhoneForward("knobert", "neil-phone"))
-        assertFalse(cfg.registry.allowsPhoneForward("stranger", "neil-phone"))
+        val p = cfg.registry.principalByAgent("operator-phone")!!
+        assertEquals(listOf("alice"), p.allowFrom?.map { it.source })
+        assertTrue(cfg.registry.allowsPhoneForward("alice", "operator-phone"))
+        assertFalse(cfg.registry.allowsPhoneForward("stranger", "operator-phone"))
     }
 
     @Test
@@ -94,23 +94,23 @@ class ConfigParserTest {
         val cfg = TestFixtures.config(
             principalsJson = """
                 [
-                  {"agent":"knobert","roles":["owner"]},
+                  {"agent":"alice","roles":["owner"]},
                   {
-                    "agent":"neil-phone",
-                    "phone":"+13602196756",
+                    "agent":"operator-phone",
+                    "phone":"+15551234567",
                     "roles":["owner"],
-                    "allow_from":["knobert", "knobert-.*"]
+                    "allow_from":["alice", "alice-.*"]
                   }
                 ]
             """.trimIndent(),
         )
-        val p = cfg.registry.principalByAgent("neil-phone")!!
-        assertEquals(listOf("knobert", "knobert-.*"), p.allowFrom?.map { it.source })
-        assertTrue(cfg.registry.allowsPhoneForward("knobert", "neil-phone"))
-        assertTrue(cfg.registry.allowsPhoneForward("knobert-macbook", "neil-phone"))
-        assertTrue(cfg.registry.allowsPhoneForward("knobert-pi", "neil-phone"))
-        assertFalse(cfg.registry.allowsPhoneForward("knobertx", "neil-phone"))
-        assertFalse(cfg.registry.allowsPhoneForward("stranger", "neil-phone"))
+        val p = cfg.registry.principalByAgent("operator-phone")!!
+        assertEquals(listOf("alice", "alice-.*"), p.allowFrom?.map { it.source })
+        assertTrue(cfg.registry.allowsPhoneForward("alice", "operator-phone"))
+        assertTrue(cfg.registry.allowsPhoneForward("alice-laptop", "operator-phone"))
+        assertTrue(cfg.registry.allowsPhoneForward("alice-pi", "operator-phone"))
+        assertFalse(cfg.registry.allowsPhoneForward("alicex", "operator-phone"))
+        assertFalse(cfg.registry.allowsPhoneForward("stranger", "operator-phone"))
     }
 
     @Test
@@ -125,7 +125,7 @@ class ConfigParserTest {
                   "agent": "p",
                   "phone": "+15551234567",
                   "roles": ["owner"],
-                  "allow_from": ["knobert-["]
+                  "allow_from": ["alice-["]
                 }
               ],
               "routing": {"sms_inbound_agent": "p"},

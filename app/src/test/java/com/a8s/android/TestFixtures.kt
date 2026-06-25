@@ -10,11 +10,11 @@ object TestFixtures {
         rolesJson: String = """{"owner":{"commands":["*"]}}""",
         principalsJson: String = """
             [
-              {"agent":"knobert","roles":["owner"]},
-              {"agent":"neil-phone","phone":"+13602196756","roles":["owner"]}
+              {"agent":"alice","roles":["owner"]},
+              {"agent":"operator-phone","phone":"+15551234567","roles":["owner"]}
             ]
         """.trimIndent(),
-        routingAgent: String = "knobert",
+        routingAgent: String = "alice",
     ): A8sAndroid.Config {
         val json = JSONObject(
             """

@@ -18,7 +18,7 @@ data class Principal(
 
 /**
  * One `allow_from` entry: exact agent name, or a regex when the pattern
- * contains regex metacharacters (e.g. `knobert-.*`).
+ * contains regex metacharacters (e.g. `alice-.*`).
  */
 data class AllowFromMatcher(val source: String) {
     private val exact: String?
@@ -58,7 +58,7 @@ data class RoutingConfig(val smsInboundAgent: String)
  *
  * - MQTT commands run only when `to == device` and `from` is a known agent
  *   with a role permitting the verb.
- * - MQTT to a phone-backed agent (`to == neil-phone`) forwards opaque SMS;
+ * - MQTT to a phone-backed agent (`to == operator-phone`) forwards opaque SMS;
  *   slash-prefixed content is **not** executed locally. Optional
  *   `allow_from` on that principal restricts which agents may trigger SMS.
  * - SMS from a matched phone principal: `/verb` runs on-device; plain text

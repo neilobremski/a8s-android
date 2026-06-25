@@ -23,7 +23,7 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!-- Contacts — needed to resolve RCS notification titles (contact display
-         names like "Neil C. Obremski") back to phone numbers so the
+         names like "Example Contact") back to phone numbers so the
          existing phonebook lookup works. SMS path doesn't need this; the
          system gives us the raw phone number directly there. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />

@@ -1,12 +1,13 @@
 # a8s-android
 
-A high-reliability messaging bridge for the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/blob/main/apps/a8s/README.md). It turns an Android phone into a messaging gateway agent that can send and receive SMS/RCS messages via MQTT.
+A high-reliability messaging bridge for the **a8s (Agent Infinity System)**
+upstream cluster. It turns an Android phone into a messaging gateway agent that can send and receive SMS/RCS messages via MQTT.
 
 ## Features
 
 - **a8s Integration:** Operates as a remote node in an a8s cluster.
 - **Command-driven model:** Configured agents issue `/command` messages to the device node; commands execute locally and reply over MQTT.
-- **Phone-agent SMS bridge:** MQTT to a phone-backed agent (e.g. `neil-phone`) forwards opaque SMS when `from` matches that principal's `allow_from` (or the list is absent/empty) — even `/logs` is not executed on the device.
+- **Phone-agent SMS bridge:** MQTT to a phone-backed agent (e.g. `operator-phone`) forwards opaque SMS when `from` matches that principal's `allow_from` (or the list is absent/empty) — even `/logs` is not executed on the device.
 - **Explicit SMS sending:** `/send`, `/mms`, `/reply` — no implicit forwarding.
 - **SMS/RCS to MQTT:** Incoming SMS and intercepted RCS notifications publish back to the cluster.
 - **Media receive:** Extracts images/video from RCS notifications (3 strategies) and MMS via ContentObserver.
@@ -27,11 +28,11 @@ The app is configured via a JSON file with the following schema:
     "owner": { "commands": ["*"] }
   },
   "principals": [
-    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"], "allow_from": ["knobert", "knobert-.*"] },
-    { "agent": "knobert", "roles": ["owner"] },
-    { "agent": "neil-macbook", "roles": ["owner"] }
+    { "agent": "operator-phone", "phone": "+15551234567", "roles": ["owner"], "allow_from": ["alice", "alice-.*"] },
+    { "agent": "alice", "roles": ["owner"] },
+    { "agent": "alice-laptop", "roles": ["owner"] }
   ],
-  "routing": { "sms_inbound_agent": "knobert" },
+  "routing": { "sms_inbound_agent": "alice" },
   "remotes": {
     "hivemq": {
       "transport": "mqtt",
@@ -63,7 +64,7 @@ The app is configured via a JSON file with the following schema:
   - **`allow_from`** *(optional, phone principals only)* — agent names or
     regex patterns permitted to MQTT-forward to this phone principal.
     Entries without regex metacharacters match exactly; patterns with
-    metacharacters (e.g. `knobert-.*`) match the full sender name.
+    metacharacters (e.g. `alice-.*`) match the full sender name.
     When set and non-empty, only matching senders trigger SMS; absent or
     `[]` permits any sender (excluding self-loopback).
 - **`routing.sms_inbound_agent`** — where plain SMS from a phone
@@ -244,7 +245,7 @@ without an obvious cause, those are the first two things to check.
 ## Setup
 
 1. **Install:** Download the latest APK from the
-   [Releases page](https://github.com/neilobremski/a8s-android/releases/latest)
+   [Releases page](https://github.com/OWNER/a8s-android/releases/latest)
    (filename: `a8s-android-<version>-debug.apk`). Sideload via
    `adb install` or copy to the device and tap to install.
 2. **Open the app and grant permissions:**

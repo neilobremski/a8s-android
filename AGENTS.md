@@ -19,13 +19,14 @@ opening a PR.
   `app/build.gradle.kts` (and ideally `versionCode`). Use normal semver
   increments (e.g. 1.28 → 1.29). Do not jump to a major version for
   config or API breaks unless the user explicitly requests it.
-- **Research / postmortem docs** (`*_RESEARCH.md`, `MQTT_COMMAND_DEDUP.md`,
-  `A8S_CLUSTER_INTEGRATION.md`, …) may keep incident context for
-  forensics. Onboarding docs stay present-tense and as-is.
+- **No PII in the repo.** Use fictional agent names (`alice`, `operator-phone`),
+  example phone numbers (`+15551234567`), and placeholders — never real operator
+  names, numbers, or emails. `.github/pii_check.py` scans PR diffs (CI secret
+  `PII_PATTERNS`) and runs in `.githooks/pre-push` when hooks are enabled.
 
 ## What this is
 
-An Android app that bridges the [a8s (Agent Infinity System)](https://github.com/neilobremski/bin/tree/main/apps/a8s)
+An Android app that bridges the **a8s (Agent Infinity System)** upstream
 cluster to a phone. Upstream daemon code lives at `~/bin/apps/a8s` on the
 operator machine — see `A8S_CLUSTER_INTEGRATION.md` for how routing, remotes,
 and opaque phone-agent SMS forwards relate to this app. Acts as a participant on the
@@ -39,7 +40,7 @@ MQTT topic and:
   `phone` field) forwards **opaque SMS**, including slash-prefixed text;
   nothing is executed locally on that path. Optional `allow_from` on that
   principal restricts which agents may trigger the forward (literal names
-  or regex patterns such as `knobert-.*`).
+  or regex patterns such as `alice-.*`).
 - **Explicit SMS** — `/send <number> <message>`, `/mms <number> <url>`,
   `/reply <number> <text>` (fires cached RCS notification reply action).
 - **SMS/RCS → MQTT** — incoming SMS or intercepted Google Messages RCS
@@ -219,10 +220,10 @@ Pure function order (`decideRoute`):
     "owner": { "commands": ["*"] }
   },
   "principals": [
-    { "agent": "neil-phone", "phone": "+13602196756", "roles": ["owner"], "allow_from": ["knobert", "knobert-.*"] },
-    { "agent": "knobert", "roles": ["owner"] }
+    { "agent": "operator-phone", "phone": "+15551234567", "roles": ["owner"], "allow_from": ["alice", "alice-.*"] },
+    { "agent": "alice", "roles": ["owner"] }
   ],
-  "routing": { "sms_inbound_agent": "knobert" },
+  "routing": { "sms_inbound_agent": "alice" },
   "remotes": {
     "hivemq": {
       "transport": "mqtt",
@@ -275,7 +276,7 @@ requires at least one configured service.
   state, default unchecked.
 - **`principals`** with `phone` match inbound SMS/RCS by normalized
   digits; fall-through publishes as the phone agent, not `device`.
-- **Remote agents** (no `phone`, e.g. `knobert`) send MQTT commands to
+- **Remote agents** (no `phone`, e.g. `alice`) send MQTT commands to
   `device` but are not treated as self-loopback.
 
 ## Permissions
@@ -326,13 +327,23 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
 
 # Pre-push gate (the same command the .githooks/pre-push hook runs):
+#   pii_check.py on the push range, then:
 ./gradlew detekt test :app:compileDebugKotlin
-# Or full build:
-./gradlew assembleDebug   # → app/build/outputs/apk/debug/app-debug.apk
+# Or full build (CI passes -PgithubRepo for release/update slug):
+./gradlew assembleDebug -PgithubRepo=OWNER/a8s-android
 ```
 
 To wire the local pre-push gate so a broken branch can't even be pushed:
 `git config core.hooksPath .githooks`.
+
+**PII patterns (one-time):**
+
+```bash
+cp .github/pii-patterns.example.txt .github/pii-patterns.local.txt
+# edit .github/pii-patterns.local.txt — real names/numbers (gitignored)
+.github/sync-pii-patterns.sh   # → GitHub Actions secret PII_PATTERNS
+python -m pytest tests/test_pii.py -q
+```
 
 ## Signing & install
 
@@ -431,6 +442,9 @@ fun route(payload: String): MqttRoute = throw IllegalStateException("bad")
 
 ## Common pitfalls
 
+- **Don't commit PII.** Real agent names, phone numbers, and emails belong
+  in operator config loaded at runtime, not in docs/tests. The `pii-check`
+  CI job blocks PRs that add matching lines.
 - **Don't log secrets.** Detekt won't catch this; the in-app log ring
   is shown on screen and surfaced via `/logs`.
 - **Don't use `body` on the wire.** It's `content`. Regression test
