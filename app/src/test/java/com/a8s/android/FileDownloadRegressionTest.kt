@@ -20,13 +20,13 @@ class FileDownloadRegressionTest {
     fun `non-command content returns NotACommand`() {
         val payload = JSONObject().apply {
             put("to", "android-pixel-7")
-            put("from", "knobert")
+            put("from", "alice")
             put("content", "see attached")
         }.toString()
 
         val route = decideRoute(payload, config())
         assertTrue(route is MqttRoute.NotACommand)
-        assertEquals("knobert", (route as MqttRoute.NotACommand).sender)
+        assertEquals("alice", (route as MqttRoute.NotACommand).sender)
     }
 
     @Test
@@ -51,7 +51,7 @@ class FileDownloadRegressionTest {
     @Test
     fun `message to non-device with files is dropped`() {
         val payload = JSONObject().apply {
-            put("to", "neil-phone")
+            put("to", "operator-phone")
             put("from", "gerry")
             put("content", "doc here")
             put("files", org.json.JSONArray().apply {

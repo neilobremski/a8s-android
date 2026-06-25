@@ -20,7 +20,7 @@ import java.net.URL
  */
 object Updater {
 
-    const val DEFAULT_REPO = "neilobremski/a8s-android"
+    val githubRepo: String get() = BuildConfig.GITHUB_REPO
 
     data class ReleaseInfo(
         val tagName: String,         // e.g. "v1.8.0"
@@ -108,7 +108,7 @@ object Updater {
 
     // ---------- HTTP / IO (thin wrappers; not unit-tested in this PR) ----------
 
-    fun fetchLatestRelease(repo: String = DEFAULT_REPO): ReleaseInfo {
+    fun fetchLatestRelease(repo: String = githubRepo): ReleaseInfo {
         val url = URL("https://api.github.com/repos/$repo/releases/latest")
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"

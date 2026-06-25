@@ -8,6 +8,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  pii-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check for PII in diff
+        env:
+          PII_PATTERNS: ${{ secrets.PII_PATTERNS }}
+        run: python .github/pii_check.py
+      - name: PII check unit tests
+        run: pip install pytest && python -m pytest tests/test_pii.py -q
+
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -31,7 +48,7 @@ jobs:
         run: ./gradlew --no-daemon testDebugUnitTest --stacktrace
 
       - name: Build Debug APK
-        run: ./gradlew --no-daemon assembleDebug --stacktrace
+        run: ./gradlew --no-daemon assembleDebug -PgithubRepo=${{ github.repository }} --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

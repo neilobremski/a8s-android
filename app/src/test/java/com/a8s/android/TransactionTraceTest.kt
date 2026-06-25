@@ -21,7 +21,7 @@ class TransactionTraceTest {
                 flow = "PHONE_FWD",
                 status = TransactionTrace.Status.OK,
                 from = "Bob",
-                to = "SMS ••••6756",
+                to = "SMS ••••4567",
                 summary = "text: Here is the file",
                 detail = "  • photo.jpg: 1 storage url(s)\nsms: sent with inline URL(s)",
             ),
@@ -90,7 +90,7 @@ class TransactionTraceTest {
 
     @Test
     fun `maskTo masks digit targets`() {
-        assertTrue(TransactionTrace.maskTo("text-13602196756").contains("••••"))
+        assertTrue(TransactionTrace.maskTo("text-15551234567").contains("••••"))
         assertFalse(TransactionTrace.maskTo("Bob").contains("••••"))
     }
 }

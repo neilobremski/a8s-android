@@ -11,8 +11,12 @@ android {
         applicationId = "com.a8s.android"
         minSdk = 26
         targetSdk = 34
-        versionCode = 34
-        versionName = "1.29.0"
+        versionCode = 35
+        versionName = "1.30.0"
+        val githubRepo = providers.gradleProperty("githubRepo")
+            .orElse(providers.environmentVariable("GITHUB_REPO"))
+            .orElse("example-org/a8s-android")
+        buildConfigField("String", "GITHUB_REPO", "\"${githubRepo.get()}\"")
     }
 
     signingConfigs {
@@ -52,6 +56,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 
     testOptions {

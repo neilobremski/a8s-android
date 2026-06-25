@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
-# Block pushes whose tip won't compile, fails detekt, or fails unit tests.
+# Block pushes whose diff adds PII, or whose tip won't compile / fails detekt / tests.
 # Enable with:  git config core.hooksPath .githooks
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+ZERO="0000000000000000000000000000000000000000"
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue
+  if [ "$remote_sha" = "$ZERO" ]; then
+    range="origin/main...${local_sha}"
+  else
+    range="${remote_sha}..${local_sha}"
+  fi
+  echo "[pre-push] pii_check.py --range ${range}"
+  python3 .github/pii_check.py --range "$range"
+done
 echo "[pre-push] gradle: detekt + test + compileDebugKotlin"
 ./gradlew --no-daemon detekt test :app:compileDebugKotlin

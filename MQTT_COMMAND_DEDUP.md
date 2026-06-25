@@ -138,7 +138,7 @@ Issue #36 notes the daemon separately increased PUBACK timeout and backoff.
 Android dedup is still warranted: any duplicate publish path (retries, dual
 daemons, broker redelivery) should not become duplicate SMS.
 
-Relevant upstream surfaces (in the [a8s tree](https://github.com/neilobremski/bin/tree/main/apps/a8s)):
+Relevant upstream surfaces in the upstream a8s tree:
 
 - Envelope `id` / ULID generation and `_process_pending` dedup ring
 - MQTT publish retry when PUBACK or connect ack times out
@@ -271,6 +271,6 @@ Tests: `CommandDedupTest`, `CmdHelpersTest` (dedup keys), `MqttRouteTest`
 
 ## References
 
-- GitHub issue [#36](https://github.com/neilobremski/a8s-android/issues/36)
+- GitHub issue [#36](issue #36)
 - `AGENTS.md` — agent onboarding + pitfall “don't bypass CommandDedup”
 - MQTT 3.1.1 QoS 1 flow: PUBLISH → PUBACK on each hop

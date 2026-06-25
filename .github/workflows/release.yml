@@ -53,7 +53,7 @@ jobs:
         if: steps.tag_check.outputs.skip == 'false'
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug --stacktrace
+          ./gradlew --no-daemon assembleDebug -PgithubRepo=${{ github.repository }} --stacktrace
 
       - name: Stage APK with version in filename
         if: steps.tag_check.outputs.skip == 'false'
