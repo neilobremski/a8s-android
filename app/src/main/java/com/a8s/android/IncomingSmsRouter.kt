@@ -15,23 +15,48 @@ object IncomingSmsRouter {
 
     private data class ResolvedSender(val number: String, val principal: Principal)
 
-    fun publishIncoming(
-        service: A8sService,
-        fromIdentity: String,
-        body: String,
-        mediaFiles: List<File> = emptyList(),
-        replyAction: android.app.Notification.Action? = null,
-    ) {
-        val config = A8sAndroid.config ?: return
-        val sender = resolveSender(service, config, fromIdentity) ?: return
+    data class IngressMeta(
+        val eventTimeMs: Long? = null,
+        val maxAgeMs: Long? = null,
+    )
 
-        if (replyAction != null && sender.number.isNotBlank()) {
-            A8sAndroid.cacheReplyAction(sender.number, replyAction)
+    data class IncomingMessage(
+        val fromIdentity: String,
+        val body: String,
+        val mediaFiles: List<File> = emptyList(),
+        val replyAction: android.app.Notification.Action? = null,
+        val ingress: IngressMeta? = null,
+    )
+
+    fun publishIncoming(service: A8sService, message: IncomingMessage) {
+        val config = A8sAndroid.config ?: return
+        val eventTimeMs = message.ingress?.eventTimeMs
+        val maxAgeMs = message.ingress?.maxAgeMs
+        if (eventTimeMs != null && maxAgeMs != null &&
+            IngressStaleness.isTooOld(eventTimeMs, maxAgeMs = maxAgeMs)) {
+            A8sAndroid.log(
+                "Ignored stale ingress from ${message.fromIdentity} " +
+                    "(event ${ageMinutes(eventTimeMs)}m ago, max ${maxAgeMs / 60_000}m)",
+            )
+            return
+        }
+        val sender = resolveSender(service, config, message.fromIdentity) ?: return
+
+        if (isOutboundSmsEcho(sender.number, message.body)) {
+            A8sAndroid.log(
+                "Ignored inbound SMS echo from ${PhoneNormalize.maskNumber(sender.number)} " +
+                    "(multipart outbound fragment)",
+            )
+            return
         }
 
-        if (handleSmsCommand(service, config, sender, body)) return
+        if (message.replyAction != null && sender.number.isNotBlank()) {
+            A8sAndroid.cacheReplyAction(sender.number, message.replyAction)
+        }
 
-        publishFallThrough(service, config, sender.principal, body, mediaFiles)
+        if (handleSmsCommand(service, config, sender, message.body)) return
+
+        publishFallThrough(service, config, sender.principal, message.body, message.mediaFiles)
     }
 
     private fun resolveSender(
@@ -57,6 +82,9 @@ object IncomingSmsRouter {
         }
         return ResolvedSender(resolved, principal)
     }
+
+    private fun ageMinutes(eventTimeMs: Long): Long =
+        (System.currentTimeMillis() - eventTimeMs) / 60_000L
 
     private fun handleSmsCommand(
         service: A8sService,
