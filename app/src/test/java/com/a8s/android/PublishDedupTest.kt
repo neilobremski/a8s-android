@@ -57,4 +57,26 @@ class PublishDedupTest {
         assertFalse(d.shouldPublish("x", now = 4 * 60 * 1000L))
         assertTrue(d.shouldPublish("x", now = 5 * 60 * 1000L + 1))
     }
+
+    @Test
+    fun `persisted keys survive reload within persist window`() {
+        val file = java.io.File.createTempFile("dedup", ".json")
+        file.deleteOnExit()
+        val store = FileDedupStore(file)
+        val d1 = PublishDedup(
+            windowMs = 1000L,
+            persistWindowMs = 100_000L,
+            store = store,
+        )
+        assertTrue(d1.shouldPublish("k", now = 1000L))
+        assertFalse(d1.shouldPublish("k", now = 2000L))
+
+        val d2 = PublishDedup(
+            windowMs = 1000L,
+            persistWindowMs = 100_000L,
+            store = store,
+        )
+        assertFalse(d2.shouldPublish("k", now = 5000L), "persisted dedup blocks after restart")
+        assertTrue(d2.shouldPublish("k", now = 200_000L), "expires after persist window")
+    }
 }

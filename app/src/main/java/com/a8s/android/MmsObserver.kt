@@ -82,6 +82,7 @@ class MmsObserver(
         val sender = getMmsSender(mmsId) ?: return
         val text = getMmsText(mmsId)
         val mediaFiles = getMmsMedia(mmsId)
+        val eventTimeMs = getMmsDateMs(mmsId)
 
         if (text.isEmpty() && mediaFiles.isEmpty()) return
 
@@ -89,8 +90,38 @@ class MmsObserver(
         A8sAndroid.log("MmsObserver: MMS from $sender: ${body.take(100)} [+${mediaFiles.size} media]")
 
         if (mediaFiles.isNotEmpty()) {
-            A8sService.instance?.publishIncoming(sender, body, mediaFiles)
+            A8sService.instance?.publishIncoming(
+                IncomingSmsRouter.IncomingMessage(
+                    fromIdentity = sender,
+                    body = body,
+                    mediaFiles = mediaFiles,
+                    ingress = IncomingSmsRouter.IngressMeta(
+                        eventTimeMs = eventTimeMs,
+                        maxAgeMs = IngressStaleness.SMS_MAX_AGE_MS,
+                    ),
+                ),
+            )
         }
+    }
+
+    private fun getMmsDateMs(mmsId: Long): Long {
+        try {
+            val cursor = context.contentResolver.query(
+                Telephony.Mms.CONTENT_URI,
+                arrayOf(Telephony.Mms.DATE),
+                "${Telephony.Mms._ID} = ?",
+                arrayOf(mmsId.toString()),
+                null,
+            ) ?: return 0L
+            cursor.use { c ->
+                if (c.moveToFirst()) {
+                    return c.getLong(0) * 1000L
+                }
+            }
+        } catch (e: Exception) {
+            A8sAndroid.log("MmsObserver: error reading date for MMS $mmsId: ${e.message}")
+        }
+        return 0L
     }
 
     private fun getMmsSender(mmsId: Long): String? {

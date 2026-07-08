@@ -57,7 +57,9 @@ class A8sService : LifecycleService() {
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var wifiLock: WifiManager.WifiLock
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    internal val publishDedup = PublishDedup()
+    internal val publishDedup: PublishDedup by lazy {
+        PublishDedup(store = FileDedupStore(File(filesDir, "inbound_publish_dedup.json")))
+    }
     private val retryQueue = PublishRetryQueue(
         scheduler = { delayMs, runnable -> handler.postDelayed(runnable, delayMs) },
     )
@@ -557,6 +559,7 @@ class A8sService : LifecycleService() {
             // sendMultipartTextMessage so the result reaches us for
             // every chunk.
             val parts = smsManager.divideMessage(body)
+            recordOutboundSmsParts(to, parts)
             val sentIntents = ArrayList<PendingIntent>(parts.size)
             for (i in parts.indices) {
                 val intent = Intent(SMS_SENT_ACTION).apply {
@@ -579,13 +582,8 @@ class A8sService : LifecycleService() {
         }
     }
 
-    fun publishIncoming(
-        fromIdentity: String,
-        body: String,
-        mediaFiles: List<File> = emptyList(),
-        replyAction: android.app.Notification.Action? = null,
-    ) {
-        IncomingSmsRouter.publishIncoming(this, fromIdentity, body, mediaFiles, replyAction)
+    fun publishIncoming(message: IncomingSmsRouter.IncomingMessage) {
+        IncomingSmsRouter.publishIncoming(this, message)
     }
 
     private fun registerNetworkCallback() {

@@ -16,6 +16,18 @@ class SmsNotificationListener : NotificationListenerService() {
 
         if (text.isEmpty()) return
 
+        val eventTimeMs = NotificationIngress.eventTimeMs(sbn)
+        if (IngressStaleness.isTooOld(
+                eventTimeMs,
+                maxAgeMs = IngressStaleness.NOTIFICATION_MAX_AGE_MS,
+            )) {
+            A8sAndroid.log(
+                "Ignored stale RCS notification from $title " +
+                    "(event ${(System.currentTimeMillis() - eventTimeMs) / 60_000}m ago)",
+            )
+            return
+        }
+
         val brief = text.replace("\n", " ").trim().let {
             if (it.length > 200) it.take(200) + "…" else it
         }
@@ -34,10 +46,31 @@ class SmsNotificationListener : NotificationListenerService() {
                 val strategies = media.joinToString(", ") { it.strategy }
                 A8sAndroid.log("Intercepted RCS from $title: $brief [+${media.size} media via $strategies]")
                 val files = media.map { it.file }
-                A8sService.instance?.publishIncoming(title, text, files, replyAction)
+                A8sService.instance?.publishIncoming(
+                    IncomingSmsRouter.IncomingMessage(
+                        fromIdentity = title,
+                        body = text,
+                        mediaFiles = files,
+                        replyAction = replyAction,
+                        ingress = IncomingSmsRouter.IngressMeta(
+                            eventTimeMs = eventTimeMs,
+                            maxAgeMs = IngressStaleness.NOTIFICATION_MAX_AGE_MS,
+                        ),
+                    ),
+                )
             } else {
                 A8sAndroid.log("Intercepted RCS from $title: $brief")
-                A8sService.instance?.publishIncoming(title, text, replyAction = replyAction)
+                A8sService.instance?.publishIncoming(
+                    IncomingSmsRouter.IncomingMessage(
+                        fromIdentity = title,
+                        body = text,
+                        replyAction = replyAction,
+                        ingress = IncomingSmsRouter.IngressMeta(
+                            eventTimeMs = eventTimeMs,
+                            maxAgeMs = IngressStaleness.NOTIFICATION_MAX_AGE_MS,
+                        ),
+                    ),
+                )
             }
         }.start()
     }

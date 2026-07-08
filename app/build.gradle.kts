@@ -11,8 +11,8 @@ android {
         applicationId = "com.a8s.android"
         minSdk = 26
         targetSdk = 34
-        versionCode = 35
-        versionName = "1.30.0"
+        versionCode = 37
+        versionName = "1.31.0"
         val githubRepo = providers.gradleProperty("githubRepo")
             .orElse(providers.environmentVariable("GITHUB_REPO"))
             .orElse("example-org/a8s-android")

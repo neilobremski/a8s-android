@@ -18,7 +18,16 @@ class SmsReceiver : BroadcastReceiver() {
                 if (it.length > 200) it.take(200) + "…" else it
             }
             A8sAndroid.log("Received SMS from $from: $brief")
-            A8sService.instance?.publishIncoming(from, body)
+            A8sService.instance?.publishIncoming(
+                IncomingSmsRouter.IncomingMessage(
+                    fromIdentity = from,
+                    body = body,
+                    ingress = IncomingSmsRouter.IngressMeta(
+                        eventTimeMs = msg.timestampMillis,
+                        maxAgeMs = IngressStaleness.SMS_MAX_AGE_MS,
+                    ),
+                ),
+            )
         }
     }
 }
