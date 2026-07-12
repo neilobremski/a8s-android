@@ -14,7 +14,6 @@ object TestFixtures {
               {"agent":"operator-phone","phone":"+15551234567","roles":["owner"]}
             ]
         """.trimIndent(),
-        routingAgent: String = "alice",
     ): A8sAndroid.Config {
         val json = JSONObject(
             """
@@ -22,7 +21,6 @@ object TestFixtures {
               "device": "$device",
               "roles": $rolesJson,
               "principals": $principalsJson,
-              "routing": {"sms_inbound_agent": "$routingAgent"},
               "remotes": {
                 "default": {
                   "broker": "ssl://broker:8883",

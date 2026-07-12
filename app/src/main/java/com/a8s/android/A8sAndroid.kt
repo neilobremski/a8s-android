@@ -156,7 +156,6 @@ class A8sAndroid : Application() {
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,
     ) {
-        val routing: RoutingConfig get() = registry.routing
     }
 
     override fun onCreate() {

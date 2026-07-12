@@ -22,14 +22,10 @@ object CmdTell {
             return
         }
         val (ok, fail) = service.publishEnvelope(fromAgent, parts.agent, parts.message)
-        val remoteNote = "(${ok}/${ok + fail} remotes)"
-        val confirm = if (!cmd.smsReplyTo.isNullOrBlank()) {
-            // Keep SMS confirmation short — repeating the told message causes
-            // multipart replies whose carrier echoes loop back as inbound SMS.
-            "tell $fromAgent -> ${parts.agent}: ok (${parts.message.length} chars) $remoteNote"
+        if (ok > 0) {
+            IncomingSmsRouter.setLastTellTarget(fromAgent, parts.agent)
         } else {
-            "tell $fromAgent -> ${parts.agent}: ${service.preview(parts.message)} $remoteNote"
+            service.replyToSender(config, cmd, "tell failed: 0 remotes reached")
         }
-        service.replyToSender(config, cmd, confirm)
     }
 }

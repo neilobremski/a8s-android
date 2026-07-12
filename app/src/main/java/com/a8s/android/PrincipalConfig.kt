@@ -51,7 +51,6 @@ data class AllowFromMatcher(val source: String) {
     }
 }
 
-data class RoutingConfig(val smsInboundAgent: String)
 
 /**
  * Parsed auth + routing from `a8s.json`. Pure Kotlin for unit tests.
@@ -68,7 +67,6 @@ class PrincipalRegistry(
     val device: String,
     val roles: Map<String, RoleSpec>,
     private val principals: List<Principal>,
-    val routing: RoutingConfig,
 ) {
     private val byAgent: Map<String, Principal> = principals.associateBy { it.agent }
 
@@ -126,10 +124,9 @@ object RolePolicy {
 
 object ConfigParser {
 
-    private val ROOT_ALLOWED = setOf("device", "roles", "principals", "routing", "remotes", "services")
+    private val ROOT_ALLOWED = setOf("device", "roles", "principals", "remotes", "services")
     private val ROLE_ALLOWED = setOf("commands")
     private val PRINCIPAL_ALLOWED = setOf("agent", "phone", "roles", "allow_from")
-    private val ROUTING_ALLOWED = setOf("sms_inbound_agent")
 
     fun parse(root: JSONObject): A8sAndroid.Config {
         rejectUnknownKeys(root, ROOT_ALLOWED)
@@ -161,8 +158,7 @@ object ConfigParser {
                 "principal '${p.agent}': allow_from requires phone"
             }
         }
-        val routing = parseRouting(root.getJSONObject("routing"), principals, device)
-        val registry = PrincipalRegistry(device, roles, principals, routing)
+        val registry = PrincipalRegistry(device, roles, principals)
         val remotes = Network.parseRemotes(root)
         require(remotes.isNotEmpty()) { "remotes must not be empty" }
         val services = Network.parseServices(root)
@@ -241,20 +237,6 @@ object ConfigParser {
         return out
     }
 
-    private fun parseRouting(
-        obj: JSONObject,
-        principals: List<Principal>,
-        device: String,
-    ): RoutingConfig {
-        rejectUnknownKeys(obj, ROUTING_ALLOWED)
-        val target = obj.getString("sms_inbound_agent").trim()
-        require(target.isNotEmpty()) { "routing.sms_inbound_agent must not be blank" }
-        require(target != device) { "routing.sms_inbound_agent must not equal device" }
-        require(principals.any { it.agent == target }) {
-            "routing.sms_inbound_agent '$target' is not a configured principal"
-        }
-        return RoutingConfig(target)
-    }
 
     private fun rejectUnknownKeys(spec: JSONObject, allowed: Set<String>) {
         val keys = spec.keys()

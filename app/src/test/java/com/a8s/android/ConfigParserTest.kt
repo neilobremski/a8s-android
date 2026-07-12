@@ -14,7 +14,6 @@ class ConfigParserTest {
         val cfg = TestFixtures.config()
         assertEquals("android-pixel-7", cfg.device)
         assertEquals(2, cfg.registry.localAgents.size)
-        assertEquals("alice", cfg.routing.smsInboundAgent)
         assertEquals("+15551234567", cfg.registry.phoneForAgent("operator-phone"))
     }
 
@@ -27,7 +26,6 @@ class ConfigParserTest {
               "phonebook": {"A": "+1"},
               "roles": {"owner": {"commands": ["*"]}},
               "principals": [{"agent": "a", "roles": ["owner"]}],
-              "routing": {"sms_inbound_agent": "a"},
               "remotes": {"r": {"broker": "b", "topic": "t"}}
             }
             """.trimIndent(),
@@ -43,7 +41,6 @@ class ConfigParserTest {
               "device": "same",
               "roles": {"owner": {"commands": ["*"]}},
               "principals": [{"agent": "same", "roles": ["owner"]}],
-              "routing": {"sms_inbound_agent": "same"},
               "remotes": {"r": {"broker": "b", "topic": "t"}}
             }
             """.trimIndent(),
@@ -60,7 +57,6 @@ class ConfigParserTest {
               "device": "d",
               "roles": {"viewer": {"commands": ["info"]}},
               "principals": [{"agent": "a", "roles": ["viewer"]}],
-              "routing": {"sms_inbound_agent": "a"},
               "remotes": {"r": {"broker": "b", "topic": "t"}}
             }
             """.trimIndent(),
@@ -128,7 +124,6 @@ class ConfigParserTest {
                   "allow_from": ["alice-["]
                 }
               ],
-              "routing": {"sms_inbound_agent": "p"},
               "remotes": {"r": {"broker": "b", "topic": "t"}}
             }
             """.trimIndent(),
@@ -148,7 +143,6 @@ class ConfigParserTest {
                 {"agent": "a", "roles": ["owner"], "allow_from": ["b"]},
                 {"agent": "b", "roles": ["owner"]}
               ],
-              "routing": {"sms_inbound_agent": "b"},
               "remotes": {"r": {"broker": "b", "topic": "t"}}
             }
             """.trimIndent(),
