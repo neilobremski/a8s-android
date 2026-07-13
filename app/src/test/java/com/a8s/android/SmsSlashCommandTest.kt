@@ -43,5 +43,13 @@ class SmsSlashCommandTest {
     fun `classify ignores unknown numbers`() {
         val cfg = TestFixtures.config()
         assertEquals(SmsSlashCommand.Result.NotForSms, SmsSlashCommand.classify("+19999999999", "/info", cfg))
+    @Test
+    fun `classify aliases tell without slash for Siri compatibility`() {
+        val cfg = TestFixtures.config()
+        val result = SmsSlashCommand.classify("+15551234567", "tell alice hello there", cfg)
+        assertTrue(result is SmsSlashCommand.Result.Authorized)
+        val auth = result as SmsSlashCommand.Result.Authorized
+        assertEquals("tell", auth.command.name)
+        assertEquals(listOf("alice", "hello", "there"), auth.command.args)
     }
 }
