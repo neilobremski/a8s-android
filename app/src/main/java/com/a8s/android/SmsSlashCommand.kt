@@ -22,10 +22,16 @@ object SmsSlashCommand {
     }
 
     fun classify(fromNumber: String, body: String, config: A8sAndroid.Config): Result {
-        if (!body.startsWith("/")) return Result.NotForSms
+        val trimmed = body.trimStart()
+        val effectiveBody = if (trimmed.startsWith("tell ", ignoreCase = true) || trimmed.equals("tell", ignoreCase = true)) {
+            "/$trimmed"
+        } else {
+            trimmed
+        }
+        if (!effectiveBody.startsWith("/")) return Result.NotForSms
         val principal = config.registry.principalByPhone(fromNumber) ?: return Result.NotForSms
         val phone = principal.phone ?: return Result.NotForSms
-        val (name, args) = parseSlashTokens(body) ?: return Result.NotForSms
+        val (name, args) = parseSlashTokens(effectiveBody) ?: return Result.NotForSms
         if (!config.registry.allowsCommand(principal, name)) {
             return Result.Forbidden(principal.agent, phone, name)
         }

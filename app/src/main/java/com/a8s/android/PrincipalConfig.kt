@@ -124,7 +124,7 @@ object RolePolicy {
 
 object ConfigParser {
 
-    private val ROOT_ALLOWED = setOf("device", "roles", "principals", "remotes", "services")
+    private val ROOT_ALLOWED = setOf("device", "roles", "principals", "remotes", "services", "sms_throttle_s")
     private val ROLE_ALLOWED = setOf("commands")
     private val PRINCIPAL_ALLOWED = setOf("agent", "phone", "roles", "allow_from")
 
@@ -162,7 +162,8 @@ object ConfigParser {
         val remotes = Network.parseRemotes(root)
         require(remotes.isNotEmpty()) { "remotes must not be empty" }
         val services = Network.parseServices(root)
-        return A8sAndroid.Config(device, registry, remotes, services)
+        val smsThrottleMs = root.optLong("sms_throttle_s", 10L) * 1000L
+        return A8sAndroid.Config(device, registry, remotes, services, smsThrottleMs)
     }
 
     private fun parseRoles(obj: JSONObject): Map<String, RoleSpec> {
