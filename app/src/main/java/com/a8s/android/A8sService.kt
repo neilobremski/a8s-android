@@ -77,6 +77,9 @@ class A8sService : LifecycleService() {
     internal var projectionData: Intent? = null
         private set
 
+    private val outboundSmsQueue = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, String>>()
+    private var smsSenderThread: Thread? = null
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -106,6 +109,33 @@ class A8sService : LifecycleService() {
         connectAll()
         startMmsObserver()
         scheduleUpdateCheck()
+        startSmsSenderThread()
+    }
+
+    private fun startSmsSenderThread() {
+        smsSenderThread = Thread {
+            while (!Thread.interrupted()) {
+                val pair = outboundSmsQueue.poll()
+                if (pair != null) {
+                    val (to, body) = pair
+                    executeSendSms(to, body)
+                    val config = A8sAndroid.config
+                    val throttleMs = config?.smsThrottleMs ?: 10000L
+                    try {
+                        Thread.sleep(throttleMs)
+                    } catch (e: InterruptedException) {
+                        break
+                    }
+                } else {
+                    try {
+                        Thread.sleep(100)
+                    } catch (e: InterruptedException) {
+                        break
+                    }
+                }
+            }
+        }
+        smsSenderThread?.start()
     }
 
     private fun startMmsObserver() {
@@ -177,6 +207,7 @@ class A8sService : LifecycleService() {
             try { unregisterReceiver(it) } catch (_: Exception) { }
         }
         sentResultReceiver = null
+        smsSenderThread?.interrupt()
         mqttClients.values.forEach { c ->
             try { c.disconnect() } catch (_: Exception) { }
         }
@@ -320,6 +351,10 @@ class A8sService : LifecycleService() {
             }
             "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
             "trace" -> TransactionTrace.render(Commands.parseTraceArgs(cmd.args))
+            "flushdedup" -> {
+                publishDedup.clear()
+                "Deduplication cache flushed."
+            }
             else -> Commands.renderUnknown(cmd.name)
         }
         replyToSender(config, cmd, reply)
@@ -542,6 +577,11 @@ class A8sService : LifecycleService() {
     }
 
     internal fun sendSms(to: String, body: String) {
+        outboundSmsQueue.add(Pair(to, body))
+        A8sAndroid.log("SMS queued for $to: ${preview(body)}")
+    }
+
+    private fun executeSendSms(to: String, body: String) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
             != PackageManager.PERMISSION_GRANTED) {
             A8sAndroid.log("SMS Send blocked: SEND_SMS not granted — open the app and grant permissions")
@@ -576,7 +616,7 @@ class A8sService : LifecycleService() {
                 )
             }
             smsManager.sendMultipartTextMessage(to, null, parts, sentIntents, null)
-            A8sAndroid.log("SMS sent (queued) to $to: ${preview(body)}")
+            A8sAndroid.log("SMS sent to $to: ${preview(body)}")
         } catch (e: Exception) {
             A8sAndroid.log("SMS Send Failed: " + e.message)
         }

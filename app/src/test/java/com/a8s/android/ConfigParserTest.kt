@@ -15,6 +15,24 @@ class ConfigParserTest {
         assertEquals("android-pixel-7", cfg.device)
         assertEquals(2, cfg.registry.localAgents.size)
         assertEquals("+15551234567", cfg.registry.phoneForAgent("operator-phone"))
+        assertEquals(10000L, cfg.smsThrottleMs)
+    }
+
+    @Test
+    fun `parse respects sms_throttle_s config`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "sms_throttle_s": 5
+            }
+            """.trimIndent(),
+        )
+        val cfg = ConfigParser.parse(json)
+        assertEquals(5000L, cfg.smsThrottleMs)
     }
 
     @Test

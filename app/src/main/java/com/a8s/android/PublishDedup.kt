@@ -63,9 +63,18 @@ class PublishDedup(
         }
     }
 
+    @Synchronized
+    fun clear() {
+        seen.clear()
+        persisted.clear()
+        if (persistEnabled) {
+            store?.save(persisted)
+        }
+    }
+
     companion object {
         const val DEFAULT_WINDOW_MS: Long = 5L * 60L * 1000L
-        const val DEFAULT_PERSIST_WINDOW_MS: Long = 7L * 24L * 60L * 60L * 1000L
+        const val DEFAULT_PERSIST_WINDOW_MS: Long = Long.MAX_VALUE
         const val DEFAULT_MAX_ENTRIES: Int = 100
         const val DEFAULT_PERSIST_MAX_ENTRIES: Int = 2000
     }

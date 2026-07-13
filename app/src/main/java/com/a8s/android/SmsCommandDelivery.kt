@@ -32,46 +32,65 @@ object SmsCommandDelivery {
             "MQTT ${forward.targetAgent} -> SMS ${PhoneNormalize.maskNumber(forward.smsToNumber)}: " +
                 "${service.preview(forward.content)} [+${forward.files.size} file(s)]",
         )
-        val fileDetail = summarizeForwardFiles(forward.files)
-        if (forward.files.isEmpty()) {
-            service.sendSms(forward.smsToNumber, CmdHelpers.capForSms(attributed))
+
+        Thread {
+            var extraFiles = emptyList<EnvelopeFile>()
+            if (attributed.length > CmdHelpers.MAX_SMS_REPLY_CHARS) {
+                try {
+                    val tempFile = File.createTempFile("full-message-", ".txt", service.cacheDir)
+                    tempFile.writeText(attributed)
+                    val config = A8sAndroid.config
+                    if (config != null) {
+                        val arr = service.buildFilesArrayForSms(config, listOf(tempFile))
+                        extraFiles = envelopeFilesFromJSONArray(arr)
+                    }
+                } catch (e: Exception) {
+                    A8sAndroid.log("Failed to upload truncated text: ${e.message}")
+                }
+            }
+
+            val allEnvelopeFiles = forward.files + extraFiles
+            val fileDetail = summarizeForwardFiles(allEnvelopeFiles)
+            if (allEnvelopeFiles.isEmpty()) {
+                service.sendSms(forward.smsToNumber, CmdHelpers.capForSms(attributed))
+                TransactionTrace.record(
+                    TransactionTrace.Event(
+                        txnId = txnId,
+                        flow = "PHONE_FWD",
+                        status = TransactionTrace.Status.OK,
+                        from = forward.from,
+                        to = maskedTo,
+                        summary = "text: ${service.preview(forward.content)}",
+                        detail = "files: none\nsms: sent text-only",
+                    ),
+                )
+                return@Thread
+            }
+            val body = CmdHelpers.buildSendBody(CmdHelpers.capForSms(attributed), allEnvelopeFiles)
+            service.sendSms(forward.smsToNumber, body)
+            val withUrls = allEnvelopeFiles.count { it.storageUrls.isNotEmpty() }
+            val status = when {
+                withUrls == allEnvelopeFiles.size -> TransactionTrace.Status.OK
+                withUrls > 0 -> TransactionTrace.Status.PARTIAL
+                else -> TransactionTrace.Status.FAIL
+            }
+            val smsNote = when {
+                withUrls == 0 -> "sms: sent text-only — no storage url(s) in envelope"
+                withUrls < allEnvelopeFiles.size -> "sms: sent with inline URL(s) for $withUrls/${allEnvelopeFiles.size} file(s)"
+                else -> "sms: sent with inline URL(s) for all file(s)"
+            }
             TransactionTrace.record(
                 TransactionTrace.Event(
                     txnId = txnId,
                     flow = "PHONE_FWD",
-                    status = TransactionTrace.Status.OK,
+                    status = status,
                     from = forward.from,
                     to = maskedTo,
                     summary = "text: ${service.preview(forward.content)}",
-                    detail = "files: none\nsms: sent text-only",
+                    detail = fileDetail + "\n$smsNote",
                 ),
             )
-            return
-        }
-        val body = CmdHelpers.buildSendBody(CmdHelpers.capForSms(attributed), forward.files)
-        service.sendSms(forward.smsToNumber, body)
-        val withUrls = forward.files.count { it.storageUrls.isNotEmpty() }
-        val status = when {
-            withUrls == forward.files.size -> TransactionTrace.Status.OK
-            withUrls > 0 -> TransactionTrace.Status.PARTIAL
-            else -> TransactionTrace.Status.FAIL
-        }
-        val smsNote = when {
-            withUrls == 0 -> "sms: sent text-only — no storage url(s) in envelope"
-            withUrls < forward.files.size -> "sms: sent with inline URL(s) for $withUrls/${forward.files.size} file(s)"
-            else -> "sms: sent with inline URL(s) for all file(s)"
-        }
-        TransactionTrace.record(
-            TransactionTrace.Event(
-                txnId = txnId,
-                flow = "PHONE_FWD",
-                status = status,
-                from = forward.from,
-                to = maskedTo,
-                summary = "text: ${service.preview(forward.content)}",
-                detail = fileDetail + "\n$smsNote",
-            ),
-        )
+        }.start()
     }
 
     private fun summarizeForwardFiles(files: List<EnvelopeFile>): String =
@@ -90,8 +109,18 @@ object SmsCommandDelivery {
         files: List<File>,
     ): String {
         val capped = CmdHelpers.capForSms(text)
-        if (files.isEmpty()) return capped
-        val arr = service.buildFilesArrayForSms(config, files)
+        var allFiles = files
+        if (text.length > CmdHelpers.MAX_SMS_REPLY_CHARS) {
+            try {
+                val tempFile = File.createTempFile("full-message-", ".txt", service.cacheDir)
+                tempFile.writeText(text)
+                allFiles = allFiles + tempFile
+            } catch (e: Exception) {
+                A8sAndroid.log("Failed to write truncated text to file: ${e.message}")
+            }
+        }
+        if (allFiles.isEmpty()) return capped
+        val arr = service.buildFilesArrayForSms(config, allFiles)
         val envelopeFiles = envelopeFilesFromJSONArray(arr)
         return CmdHelpers.buildSendBody(capped, envelopeFiles)
     }

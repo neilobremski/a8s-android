@@ -13,13 +13,15 @@ import java.io.File
  */
 object IncomingSmsRouter {
 
-    private val lastTellTarget = java.util.concurrent.ConcurrentHashMap<String, String>()
-
-    fun setLastTellTarget(senderAgent: String, targetAgent: String) {
-        lastTellTarget[senderAgent] = targetAgent
+    fun setLastTellTarget(context: android.content.Context, senderAgent: String, targetAgent: String) {
+        val prefs = context.getSharedPreferences("a8s_tell", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putString(senderAgent, targetAgent).apply()
     }
 
-    internal fun getLastTellTarget(senderAgent: String): String? = lastTellTarget[senderAgent]
+    internal fun getLastTellTarget(context: android.content.Context, senderAgent: String): String? {
+        val prefs = context.getSharedPreferences("a8s_tell", android.content.Context.MODE_PRIVATE)
+        return prefs.getString(senderAgent, null)
+    }
 
     private data class ResolvedSender(val number: String, val principal: Principal)
 
@@ -132,7 +134,7 @@ object IncomingSmsRouter {
         body: String,
         mediaFiles: List<File>,
     ) {
-        val toAgent = lastTellTarget[sender.principal.agent]
+        val toAgent = getLastTellTarget(service, sender.principal.agent)
         if (toAgent == null) {
             val msg = "No default agent set up. This message can't be delivered. " +
                 "Use /tell <agent> <message> to set your active agent."

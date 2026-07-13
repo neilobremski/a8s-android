@@ -19,7 +19,7 @@ object CmdHelpers {
      * unbounded and would fan out into many billable SMS segments and
      * risk carrier truncation. ~8 segments of GSM-7.
      */
-    const val MAX_SMS_REPLY_CHARS: Int = 1200
+    const val MAX_SMS_REPLY_CHARS: Int = 160
 
     /** Truncate [text] to [MAX_SMS_REPLY_CHARS] with an ellipsis marker. */
     fun capForSms(text: String, max: Int = MAX_SMS_REPLY_CHARS): String {
@@ -324,5 +324,6 @@ object CmdHelpers {
         "/download <url> [filename]",
         "/macro <step>|<step>|…",
         "/dashboard bg <url> | content <html> | clear",
+        "/flushdedup",
     )
 }

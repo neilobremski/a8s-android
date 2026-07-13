@@ -23,7 +23,7 @@ object CmdTell {
         }
         val (ok, fail) = service.publishEnvelope(fromAgent, parts.agent, parts.message)
         if (ok > 0) {
-            IncomingSmsRouter.setLastTellTarget(fromAgent, parts.agent)
+            IncomingSmsRouter.setLastTellTarget(service, fromAgent, parts.agent)
         } else {
             service.replyToSender(config, cmd, "tell failed: 0 remotes reached")
         }

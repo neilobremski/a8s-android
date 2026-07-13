@@ -373,6 +373,16 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(replyBtn)
 
+        val flushDedupBtn = Button(this).apply {
+            text = "Flush Dedup Cache"
+            setOnClickListener {
+                A8sService.instance?.publishDedup?.clear()
+                Toast.makeText(this@MainActivity, "Dedup cache flushed", Toast.LENGTH_SHORT).show()
+                A8sAndroid.log("Diagnostics: Dedup cache flushed")
+            }
+        }
+        root.addView(flushDedupBtn)
+
         val clearBtn = Button(this).apply {
             text = "Clear Media Cache"
             setOnClickListener { clearMediaCache() }
