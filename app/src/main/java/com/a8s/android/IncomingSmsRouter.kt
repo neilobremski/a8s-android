@@ -134,19 +134,23 @@ object IncomingSmsRouter {
     ) {
         val toAgent = lastTellTarget[sender.principal.agent]
         if (toAgent == null) {
+            val msg = "No default agent set up. This message can't be delivered. " +
+                "Use /tell <agent> <message> to set your active agent."
             A8sAndroid.log("SMS fall-through from ${sender.principal.agent} rejected (no last /tell target)")
-            service.sendSms(sender.number, "No default agent set up. This message can't be delivered. Use /tell <agent> <message> to set your active agent.")
+            service.sendSms(sender.number, msg)
             mediaFiles.forEach { it.delete() }
             return
         }
         if (mediaFiles.isNotEmpty()) {
             Thread {
                 val filesArr = service.buildFilesArray(config, mediaFiles)
-                publishOne(service, config, OutboundSms(sender.principal.agent, toAgent, body, filesArr))
+                val outbound = OutboundSms(sender.principal.agent, toAgent, body, filesArr)
+                publishOne(service, config, outbound)
                 mediaFiles.forEach { it.delete() }
             }.start()
         } else {
-            publishOne(service, config, OutboundSms(sender.principal.agent, toAgent, body, JSONArray()))
+            val outbound = OutboundSms(sender.principal.agent, toAgent, body, JSONArray())
+            publishOne(service, config, outbound)
         }
     }
 

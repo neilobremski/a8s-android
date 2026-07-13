@@ -155,8 +155,7 @@ class A8sAndroid : Application() {
         val registry: PrincipalRegistry,
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,
-    ) {
-    }
+    )
 
     override fun onCreate() {
         super.onCreate()
