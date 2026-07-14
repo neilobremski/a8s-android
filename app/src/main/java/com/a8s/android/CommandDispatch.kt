@@ -6,8 +6,8 @@ package com.a8s.android
  */
 object CommandDispatch {
 
-    fun handle(route: MqttRoute.Command, execute: (MqttRoute.Command) -> Unit) {
-        if (!gateInboundSmsCommand(route)) {
+    fun handle(service: A8sService, route: MqttRoute.Command, execute: (MqttRoute.Command) -> Unit) {
+        if (!gateInboundSmsCommand(service, route)) {
             A8sAndroid.log(
                 "/${route.name} duplicate dropped (id=${route.envelopeId.take(8).ifEmpty { "?" }}…)",
             )

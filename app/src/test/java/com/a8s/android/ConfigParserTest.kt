@@ -36,6 +36,44 @@ class ConfigParserTest {
     }
 
     @Test
+    fun `parse respects sms_truncate_limit setting`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "settings": {
+                "sms_truncate_limit": 500
+              }
+            }
+            """.trimIndent(),
+        )
+        val cfg = ConfigParser.parse(json)
+        assertEquals(10000L, cfg.smsThrottleMs)
+        assertEquals(500, cfg.smsTruncateLimit)
+    }
+
+    @Test
+    fun `parse rejects unknown settings`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "settings": {
+                "fake_setting": 500
+              }
+            }
+            """.trimIndent(),
+        )
+        assertThrows(IllegalArgumentException::class.java) { ConfigParser.parse(json) }
+    }
+
+    @Test
     fun `parse rejects legacy phonebook key`() {
         val json = JSONObject(
             """

@@ -20,6 +20,10 @@ class A8sAndroid : Application() {
 
         var config: Config? = null
             private set
+            
+        fun updateConfig(newConfig: Config) {
+            config = newConfig
+        }
 
         private val logs = LinkedList<String>()
         var onLogListener: (() -> Unit)? = null
@@ -156,6 +160,7 @@ class A8sAndroid : Application() {
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,
         val smsThrottleMs: Long,
+        val smsTruncateLimit: Int,
     )
 
     override fun onCreate() {

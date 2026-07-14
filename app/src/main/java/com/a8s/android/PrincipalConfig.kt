@@ -124,9 +124,10 @@ object RolePolicy {
 
 object ConfigParser {
 
-    private val ROOT_ALLOWED = setOf("device", "roles", "principals", "remotes", "services", "sms_throttle_s")
+    private val ROOT_ALLOWED = setOf("device", "roles", "principals", "remotes", "services", "sms_throttle_s", "settings")
     private val ROLE_ALLOWED = setOf("commands")
     private val PRINCIPAL_ALLOWED = setOf("agent", "phone", "roles", "allow_from")
+    private val SETTINGS_ALLOWED = setOf("sms_truncate_limit")
 
     fun parse(root: JSONObject): A8sAndroid.Config {
         rejectUnknownKeys(root, ROOT_ALLOWED)
@@ -163,7 +164,17 @@ object ConfigParser {
         require(remotes.isNotEmpty()) { "remotes must not be empty" }
         val services = Network.parseServices(root)
         val smsThrottleMs = root.optLong("sms_throttle_s", 10L) * 1000L
-        return A8sAndroid.Config(device, registry, remotes, services, smsThrottleMs)
+
+        val settings = root.optJSONObject("settings")
+        var smsTruncateLimit = 800
+        if (settings != null) {
+            rejectUnknownKeys(settings, SETTINGS_ALLOWED)
+            if (settings.has("sms_truncate_limit")) {
+                smsTruncateLimit = settings.getInt("sms_truncate_limit")
+            }
+        }
+
+        return A8sAndroid.Config(device, registry, remotes, services, smsThrottleMs, smsTruncateLimit)
     }
 
     private fun parseRoles(obj: JSONObject): Map<String, RoleSpec> {

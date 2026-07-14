@@ -103,12 +103,12 @@ object IncomingSmsRouter {
         body: String,
     ): Boolean = when (val result = SmsSlashCommand.classify(sender.number, body, config)) {
         is SmsSlashCommand.Result.Authorized -> {
-            if (gateSmsOriginCommand(result.principal.agent, body)) {
+            if (gateSmsOriginCommand(service, result.principal.agent, body)) {
                 A8sAndroid.log(
                     "SMS command /${result.command.name} from ${result.principal.agent} " +
                         "(${PhoneNormalize.maskNumber(sender.number)})",
                 )
-                CommandDispatch.handle(result.command, service::executeCommand)
+                CommandDispatch.handle(service, result.command, service::executeCommand)
             } else {
                 A8sAndroid.log("SMS command /${result.command.name} ignored (duplicate)")
             }

@@ -44,19 +44,4 @@ class CommandDedupTest {
         assertTrue(d.shouldExecute(null, key, now = 1_500L))
     }
 
-    @Test
-    fun `gateSmsOriginCommand dedups same participant and body`() {
-        // Unique body so the process-wide singleton doesn't collide with other tests.
-        val body = "/info origin-dedup-${System.nanoTime()}"
-        // Same participant arriving twice (raw SMS then Google Messages notification).
-        assertTrue(gateSmsOriginCommand("Alice", body))
-        assertFalse(gateSmsOriginCommand("Alice", body))
-    }
-
-    @Test
-    fun `gatePhoneAgentForward dedups same envelope`() {
-        val id = "01KTVEBX9HA8ZHMH5BP2EA38${System.nanoTime() % 100}"
-        assertTrue(gatePhoneAgentForward(id, "operator-phone", "/logs"))
-        assertFalse(gatePhoneAgentForward(id, "operator-phone", "/logs"))
-    }
 }

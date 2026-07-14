@@ -421,7 +421,7 @@ class CmdHelpersTest {
     fun `capForSms truncates long text with marker and stays within budget`() {
         val long = "x".repeat(5000)
         val capped = CmdHelpers.capForSms(long)
-        assertTrue(capped.length <= CmdHelpers.MAX_SMS_REPLY_CHARS)
+        assertTrue(capped.length <= 800)
         assertTrue(capped.endsWith("… [truncated]"))
     }
 

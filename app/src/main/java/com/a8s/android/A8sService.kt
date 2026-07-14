@@ -60,6 +60,15 @@ class A8sService : LifecycleService() {
     internal val publishDedup: PublishDedup by lazy {
         PublishDedup(store = FileDedupStore(File(filesDir, "inbound_publish_dedup.json")))
     }
+    internal val inboundCommandDedup: CommandDedup by lazy {
+        CommandDedup(store = FileDedupStore(File(filesDir, "dedup_inbound_cmd.json")))
+    }
+    internal val smsOriginCommandDedup: CommandDedup by lazy {
+        CommandDedup(store = FileDedupStore(File(filesDir, "dedup_sms_origin.json")))
+    }
+    internal val phoneAgentForwardDedup: CommandDedup by lazy {
+        CommandDedup(store = FileDedupStore(File(filesDir, "dedup_phone_fwd.json")))
+    }
     private val retryQueue = PublishRetryQueue(
         scheduler = { delayMs, runnable -> handler.postDelayed(runnable, delayMs) },
     )
@@ -406,11 +415,13 @@ class A8sService : LifecycleService() {
         smsReplyTo: String? = null,
     ) {
         if (!smsReplyTo.isNullOrBlank()) {
-            val smsBody = SmsCommandDelivery.smsBodyWithUploads(this, config, body, files)
-            sendSms(smsReplyTo, smsBody)
-            A8sAndroid.log(
-                "CMD -> SMS $smsReplyTo (${smsBody.length} chars, ${files.size} file(s))",
-            )
+            Thread {
+                val smsBody = SmsCommandDelivery.smsBodyWithUploads(this, config, body, files)
+                sendSms(smsReplyTo, smsBody)
+                A8sAndroid.log(
+                    "CMD -> SMS $smsReplyTo (${smsBody.length} chars, ${files.size} file(s))",
+                )
+            }.start()
             return
         }
         publishToSender(config, sender, body, files)

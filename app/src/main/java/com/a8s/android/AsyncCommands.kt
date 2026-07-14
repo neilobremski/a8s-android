@@ -30,9 +30,11 @@ object AsyncCommands {
             if (parts == null) {
                 s.replyToSender(c, k, "usage: /send <number> <message>")
             } else {
-                val body = CmdHelpers.buildSendBody(parts.body, k.files)
-                s.sendSms(parts.number, body)
-                s.replyToSender(c, k, "SMS queued to ${parts.number}: ${s.preview(body)}")
+                Thread {
+                    val body = SmsCommandDelivery.smsBodyWithUploads(s, c, parts.body, emptyList(), existingEnvelopeFiles = k.files)
+                    s.sendSms(parts.number, body)
+                    s.replyToSender(c, k, "SMS queued to ${parts.number}: ${s.preview(body)}")
+                }.start()
             }
         },
         "mms" to { s, c, k -> CmdMms.run(s, c, k) },
@@ -40,5 +42,6 @@ object AsyncCommands {
         "tell" to { s, c, k -> CmdTell.run(s, c, k) },
         "download" to { s, c, k -> CmdDownload.run(s, c, k) },
         "dashboard" to { s, c, k -> CmdDashboard.run(s, c, k) },
+        "config" to { s, c, k -> CmdConfig.run(s, c, k) },
     )
 }
