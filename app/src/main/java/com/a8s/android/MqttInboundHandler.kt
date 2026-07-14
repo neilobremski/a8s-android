@@ -46,7 +46,7 @@ object MqttInboundHandler {
             }
             is MqttRoute.Command -> {
                 recordCommand(txnId, from, to, route)
-                CommandDispatch.handle(route, service::executeCommand)
+                CommandDispatch.handle(service, route, service::executeCommand)
             }
             is MqttRoute.Drop -> {
                 A8sAndroid.log("MQTT -> drop (${route.reason})")

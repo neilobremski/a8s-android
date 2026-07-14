@@ -21,8 +21,10 @@ object CmdHelpers {
      */
     const val MAX_SMS_REPLY_CHARS: Int = 160
 
-    /** Truncate [text] to [MAX_SMS_REPLY_CHARS] with an ellipsis marker. */
-    fun capForSms(text: String, max: Int = MAX_SMS_REPLY_CHARS): String {
+    /** Truncate [text] to the configured limit with an ellipsis marker. */
+    fun capForSms(text: String, config: A8sAndroid.Config? = A8sAndroid.config): String {
+        val max = config?.smsTruncateLimit ?: 800
+        if (max <= 0) return text
         if (text.length <= max) return text
         val marker = "… [truncated]"
         return text.take((max - marker.length).coerceAtLeast(0)) + marker
@@ -323,6 +325,7 @@ object CmdHelpers {
         "/find <label>",
         "/download <url> [filename]",
         "/macro <step>|<step>|…",
+        "/config [get|set] <key> [value]",
         "/dashboard bg <url> | content <html> | clear",
         "/flushdedup",
     )

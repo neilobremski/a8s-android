@@ -33,24 +33,27 @@ object CmdReply {
             return
         }
 
-        try {
-            val intent = Intent()
-            val bundle = Bundle()
-            bundle.putCharSequence(cached.remoteInputKey, text)
-            AndroidRemoteInput.addResultsToIntent(
-                arrayOf(AndroidRemoteInput.Builder(cached.remoteInputKey).build()),
-                intent, bundle,
-            )
-            cached.actionIntent.send(service, 0, intent)
-            service.replyToSender(
-                config, cmd,
-                "Reply sent to $number via notification action: $text",
-            )
-        } catch (e: Exception) {
-            service.replyToSender(
-                config, cmd,
-                "Reply failed: ${e.message}. Action may have expired.",
-            )
-        }
+        Thread {
+            val finalBody = SmsCommandDelivery.smsBodyWithUploads(service, config, text, emptyList(), existingEnvelopeFiles = cmd.files)
+            try {
+                val intent = Intent()
+                val bundle = Bundle()
+                bundle.putCharSequence(cached.remoteInputKey, finalBody)
+                AndroidRemoteInput.addResultsToIntent(
+                    arrayOf(AndroidRemoteInput.Builder(cached.remoteInputKey).build()),
+                    intent, bundle,
+                )
+                cached.actionIntent.send(service, 0, intent)
+                service.replyToSender(
+                    config, cmd,
+                    "Reply sent to $number via notification action: $finalBody",
+                )
+            } catch (e: Exception) {
+                service.replyToSender(
+                    config, cmd,
+                    "Reply failed: ${e.message}. Action may have expired.",
+                )
+            }
+        }.start()
     }
 }

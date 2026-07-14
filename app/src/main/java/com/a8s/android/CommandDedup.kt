@@ -14,9 +14,17 @@ package com.a8s.android
 class CommandDedup(
     private val windowMs: Long = DEFAULT_WINDOW_MS,
     private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+    private val store: FileDedupStore? = null,
 ) {
     private val seenIds = mutableMapOf<String, Long>()
     private val seenPayloads = mutableMapOf<String, Long>()
+    private val persistEnabled: Boolean = store != null
+
+    init {
+        if (persistEnabled) {
+            store?.load()?.let { seenPayloads.putAll(it) }
+        }
+    }
 
     /**
      * @return true when the command should execute; false when it is a
@@ -44,6 +52,9 @@ class CommandDedup(
         if (key.isNotEmpty()) {
             seenPayloads[key] = now
             boundSize(seenPayloads)
+            if (persistEnabled) {
+                store?.save(seenPayloads)
+            }
         }
         return true
     }
@@ -76,13 +87,9 @@ class CommandDedup(
     }
 }
 
-private val inboundCommandDedup = CommandDedup()
-
 /** Process-wide dedup gate for inbound SMS-style slash commands. */
-fun gateInboundSmsCommand(cmd: MqttRoute.Command): Boolean =
-    inboundCommandDedup.gateSmsCommand(cmd)
-
-private val smsOriginCommandDedup = CommandDedup()
+fun gateInboundSmsCommand(service: A8sService, cmd: MqttRoute.Command): Boolean =
+    service.inboundCommandDedup.gateSmsCommand(cmd)
 
 /**
  * Dedup for commands that originate over SMS/RCS. A single inbound
@@ -94,20 +101,18 @@ private val smsOriginCommandDedup = CommandDedup()
  * two delivery paths — which can present the sender as `+1…` digits vs a
  * Contacts-resolved number — collapse to the same key.
  */
-fun gateSmsOriginCommand(participant: String, body: String): Boolean =
-    smsOriginCommandDedup.shouldExecute(
+fun gateSmsOriginCommand(service: A8sService, participant: String, body: String): Boolean =
+    service.smsOriginCommandDedup.shouldExecute(
         envelopeId = null,
         payloadKey = "smsorigin|$participant|${body.trim()}",
     )
-
-private val phoneAgentForwardDedup = CommandDedup()
 
 /**
  * Dedup for inbound phone-agent envelopes forwarded to SMS. Stops broker
  * redelivery / upstream retries from amplifying into multiple texts.
  */
-fun gatePhoneAgentForward(envelopeId: String, targetAgent: String, content: String): Boolean =
-    phoneAgentForwardDedup.shouldExecute(
+fun gatePhoneAgentForward(service: A8sService, envelopeId: String, targetAgent: String, content: String): Boolean =
+    service.phoneAgentForwardDedup.shouldExecute(
         envelopeId = envelopeId,
         payloadKey = "phonefwd|$targetAgent|${content.trim()}",
     )
