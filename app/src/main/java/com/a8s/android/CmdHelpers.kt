@@ -292,7 +292,8 @@ object CmdHelpers {
 
     fun parseTellArgs(args: List<String>): TellParts? {
         if (args.size < 2) return null
-        return TellParts(args[0], args.drop(1).joinToString(" "))
+        val agent = args[0].trimEnd(',', '.', '!', '?', ':', ';')
+        return TellParts(agent, args.drop(1).joinToString(" "))
     }
 
     // ── /<unknown> ───────────────────────────────────────────────────────
