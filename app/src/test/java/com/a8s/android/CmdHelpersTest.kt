@@ -405,6 +405,25 @@ class CmdHelpersTest {
     }
 
     @Test
+    fun `parseTellArgs strips trailing punctuation from agent`() {
+        val result = CmdHelpers.parseTellArgs(listOf("anton,", "hello"))
+        assertEquals("anton", result!!.agent)
+        assertEquals("hello", result.message)
+
+        val result2 = CmdHelpers.parseTellArgs(listOf("Bob:", "how", "are", "you?"))
+        assertEquals("Bob", result2!!.agent)
+        assertEquals("how are you?", result2.message)
+    }
+
+    @Test
+    fun `parseTellArgs invokes resolver after stripping punctuation`() {
+        val resolver: (String) -> String = { if (it == "anton") "knobert" else it }
+        val result = CmdHelpers.parseTellArgs(listOf("anton,", "hello"), resolver)
+        assertEquals("knobert", result!!.agent)
+        assertEquals("hello", result.message)
+    }
+
+    @Test
     fun `parseTellArgs too few args returns null`() {
         assertNull(CmdHelpers.parseTellArgs(listOf("Bob")))
         assertNull(CmdHelpers.parseTellArgs(emptyList()))

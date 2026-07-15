@@ -7,6 +7,7 @@ package com.a8s.android
 object AsyncCommands {
 
     val handlers: Map<String, (A8sService, A8sAndroid.Config, MqttRoute.Command) -> Unit> = mapOf(
+        "nicknames" to { s, c, k -> CmdNicknames.run(s, c, k) },
         "update" to { s, c, k -> CmdUpdate.run(s, c, k) },
         "screenshot" to { s, c, k -> CmdScreenshot.run(s, c, k) },
         "photo" to { s, c, k -> CmdPhoto.run(s, c, k) },

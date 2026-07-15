@@ -290,12 +290,17 @@ object CmdHelpers {
 
     data class TellParts(val agent: String, val message: String)
 
-    fun parseTellArgs(args: List<String>): TellParts? {
+    fun parseTellArgs(args: List<String>, resolver: (String) -> String = { it }): TellParts? {
         if (args.size < 2) return null
-        return TellParts(args[0], args.drop(1).joinToString(" "))
+        val agent = args[0].trimEnd(',', '.', '!', '?', ':', ';')
+        return TellParts(resolver(agent), args.drop(1).joinToString(" "))
     }
 
     // ── /<unknown> ───────────────────────────────────────────────────────
+
+    val QUERY_COMMANDS: Set<String> = setOf(
+        "info", "logs", "trace", "ls", "cat", "location", "nicknames"
+    )
 
     /** Single source of truth for the `known commands` listing. */
     val KNOWN_COMMANDS: List<String> = listOf(
@@ -306,6 +311,7 @@ object CmdHelpers {
         "/mms <number> <url>",
         "/reply <number> <text>",
         "/tell <agent> <message>",
+        "/nicknames <agent> add|rm <nickname>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",
