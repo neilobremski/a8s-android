@@ -298,6 +298,10 @@ object CmdHelpers {
 
     // ── /<unknown> ───────────────────────────────────────────────────────
 
+    val QUERY_COMMANDS: Set<String> = setOf(
+        "info", "logs", "trace", "ls", "cat", "location", "nicknames"
+    )
+
     /** Single source of truth for the `known commands` listing. */
     val KNOWN_COMMANDS: List<String> = listOf(
         "/info",
