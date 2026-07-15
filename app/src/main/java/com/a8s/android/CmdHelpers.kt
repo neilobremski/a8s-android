@@ -290,10 +290,10 @@ object CmdHelpers {
 
     data class TellParts(val agent: String, val message: String)
 
-    fun parseTellArgs(args: List<String>): TellParts? {
+    fun parseTellArgs(args: List<String>, resolver: (String) -> String = { it }): TellParts? {
         if (args.size < 2) return null
         val agent = args[0].trimEnd(',', '.', '!', '?', ':', ';')
-        return TellParts(agent, args.drop(1).joinToString(" "))
+        return TellParts(resolver(agent), args.drop(1).joinToString(" "))
     }
 
     // ── /<unknown> ───────────────────────────────────────────────────────
@@ -307,6 +307,7 @@ object CmdHelpers {
         "/mms <number> <url>",
         "/reply <number> <text>",
         "/tell <agent> <message>",
+        "/nicknames <agent> add|rm <nickname>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",

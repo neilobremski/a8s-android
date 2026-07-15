@@ -416,6 +416,14 @@ class CmdHelpersTest {
     }
 
     @Test
+    fun `parseTellArgs invokes resolver after stripping punctuation`() {
+        val resolver: (String) -> String = { if (it == "anton") "knobert" else it }
+        val result = CmdHelpers.parseTellArgs(listOf("anton,", "hello"), resolver)
+        assertEquals("knobert", result!!.agent)
+        assertEquals("hello", result.message)
+    }
+
+    @Test
     fun `parseTellArgs too few args returns null`() {
         assertNull(CmdHelpers.parseTellArgs(listOf("Bob")))
         assertNull(CmdHelpers.parseTellArgs(emptyList()))
