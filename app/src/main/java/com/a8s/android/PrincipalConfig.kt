@@ -164,6 +164,7 @@ object ConfigParser {
         require(remotes.isNotEmpty()) { "remotes must not be empty" }
         val services = Network.parseServices(root)
         val smsThrottleMs = root.optLong("sms_throttle_s", 10L) * 1000L
+        require(smsThrottleMs >= 0L) { "sms_throttle_s must not be negative" }
 
         val settings = root.optJSONObject("settings")
         var smsTruncateLimit = 800
@@ -171,6 +172,7 @@ object ConfigParser {
             rejectUnknownKeys(settings, SETTINGS_ALLOWED)
             if (settings.has("sms_truncate_limit")) {
                 smsTruncateLimit = settings.getInt("sms_truncate_limit")
+                require(smsTruncateLimit > 0) { "sms_truncate_limit must be positive" }
             }
         }
 

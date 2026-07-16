@@ -33,6 +33,8 @@ The app is configured via a JSON file with the following schema:
     { "agent": "alice-laptop", "roles": ["owner"] }
   ],
   "routing": { "sms_inbound_agent": "alice" },
+  "sms_throttle_s": 10,
+  "settings": { "sms_truncate_limit": 800 },
   "remotes": {
     "hivemq": {
       "transport": "mqtt",
@@ -85,6 +87,14 @@ The app is configured via a JSON file with the following schema:
   URLs need to be downloaded for inbound or uploaded for outbound.
   Per-service options: `expiry_hours` (1, 6, 24, 48; default 24) and
   `timeout_s` (default 30).
+- **`sms_throttle_s`** — non-negative delay between carrier SMS units.
+  Each unit waits for Android's sent callback (or a 30-second timeout)
+  before the next unit is submitted. The logical-message queue holds at
+  most 100 entries.
+- **`settings.sms_truncate_limit`** — positive character threshold for
+  large SMS output (default 800). With a storage service configured, larger
+  output becomes a short preview plus an uploaded text-file URL; otherwise
+  it is sent as individually paced `[N/M]` carrier units.
 
 ### Routing summary
 
@@ -110,10 +120,10 @@ verbs).
 
 | Command | Description |
 |---|---|
-| `/tell <agent> <message>` | Publish an a8s envelope over MQTT. Agent and nickname targets normalize to lowercase; known canonical names always take precedence over nickname mappings. SMS-originated `/tell` uses the phone principal as `from`. |
-| `/nicknames add <nickname> for <agent>` | Add a lowercase, single-token nickname. A nickname cannot shadow a known canonical device/principal name. Existing mappings require `replace` instead of `add`. |
-| `/nicknames replace <nickname> for <agent>` | Explicitly replace an existing nickname mapping. |
-| `/nicknames remove <nickname>` | Remove a nickname mapping. |
+| `/tell <agent-or-nickname> <message>` | Publish an a8s envelope over MQTT. Multiword nicknames use exact longest-leading-phrase matching; canonical first-token names take precedence. There is no fuzzy matching. SMS-originated `/tell` uses the phone principal as `from`. |
+| `/nicknames add <nickname words> for <agent>` | Add a case-insensitive spoken nickname. Surrounding punctuation and repeated whitespace normalize away. A nickname cannot shadow a known canonical device/principal name. Existing mappings require `replace` instead of `add`. |
+| `/nicknames replace <nickname words> for <agent>` | Explicitly replace an existing nickname mapping. |
+| `/nicknames remove <nickname words>` | Remove a nickname mapping. |
 | `/nicknames list [for <agent>]` | List every nickname or only nicknames for one agent. Plain `/nicknames` also lists all mappings. |
 | `/nicknames enable\|disable\|status` | Control or inspect nickname resolution. Disabling leaves stored mappings intact. |
 | `/trace [N]` | Show structured transaction events, including `/tell` resolution, MQTT client acceptance, broker acknowledgment, retry, and broker loopback under one envelope ULID. |

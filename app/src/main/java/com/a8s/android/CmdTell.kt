@@ -7,8 +7,9 @@ package com.a8s.android
 object CmdTell {
 
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
-        val parts = CmdHelpers.parseTellArgs(cmd.args)
-        if (parts == null) {
+        val canonicalNames = config.registry.localAgents + config.device
+        val resolution = NicknamesManager.resolveTell(service, cmd.args, canonicalNames)
+        if (resolution == null) {
             service.replyToSender(config, cmd, "usage: /tell <agent> <message>")
             return
         }
@@ -21,18 +22,16 @@ object CmdTell {
             service.replyToSender(config, cmd, "tell failed: sender is not a phone-backed agent")
             return
         }
-        val canonicalNames = config.registry.localAgents + config.device
-        val resolution = NicknamesManager.resolveDetailed(service, parts.rawAgent, canonicalNames)
         val resolutionKind = when {
             !resolution.enabled -> "disabled"
             resolution.matched -> "matched"
             else -> "not-matched"
         }
         A8sAndroid.log(
-            "TELL resolve raw=${resolution.input} normalized=${resolution.normalized} " +
+            "TELL resolve raw=${resolution.rawTarget} normalized=${resolution.normalizedTarget} " +
                 "resolved=${resolution.resolved} nickname=$resolutionKind",
         )
-        val result = service.publishEnvelope(fromAgent, resolution.resolved, parts.message)
+        val result = service.publishEnvelope(fromAgent, resolution.resolved, resolution.message)
         TransactionTrace.record(
             TransactionTrace.Event(
                 txnId = result.envelopeId,
@@ -41,7 +40,7 @@ object CmdTell {
                 from = fromAgent,
                 to = resolution.resolved,
                 summary = "nickname $resolutionKind; ${deliverySummary(result)}",
-                detail = "raw target: ${resolution.input}\nnormalized target: ${resolution.normalized}",
+                detail = "raw target: ${resolution.rawTarget}\nnormalized target: ${resolution.normalizedTarget}",
             ),
         )
         if (result.accepted > 0 || result.failed > 0) {

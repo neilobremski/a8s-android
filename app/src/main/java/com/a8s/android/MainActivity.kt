@@ -376,7 +376,7 @@ class MainActivity : AppCompatActivity() {
         val flushDedupBtn = Button(this).apply {
             text = "Flush Dedup Cache"
             setOnClickListener {
-                A8sService.instance?.publishDedup?.clear()
+                A8sService.instance?.ingressCoordinator?.clear()
                 Toast.makeText(this@MainActivity, "Dedup cache flushed", Toast.LENGTH_SHORT).show()
                 A8sAndroid.log("Diagnostics: Dedup cache flushed")
             }

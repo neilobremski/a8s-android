@@ -26,8 +26,10 @@ object IncomingSmsRouter {
     private data class ResolvedSender(val number: String, val principal: Principal)
 
     data class IngressMeta(
-        val eventTimeMs: Long? = null,
-        val maxAgeMs: Long? = null,
+        val source: IngressSource,
+        val sourceEventId: String,
+        val eventTimeMs: Long,
+        val maxAgeMs: Long,
     )
 
     data class IncomingMessage(
@@ -35,22 +37,56 @@ object IncomingSmsRouter {
         val body: String,
         val mediaFiles: List<File> = emptyList(),
         val replyAction: android.app.Notification.Action? = null,
-        val ingress: IngressMeta? = null,
+        val ingress: IngressMeta,
     )
+
+    internal data class PreparedIncoming(
+        val agent: String,
+        val number: String,
+        val message: IncomingMessage,
+    )
+
+    internal fun mergePrepared(current: PreparedIncoming, incoming: PreparedIncoming): PreparedIncoming {
+        val currentMessage = current.message
+        val incomingMessage = incoming.message
+        val body = when {
+            currentMessage.body in GENERIC_MEDIA_BODIES -> incomingMessage.body
+            incomingMessage.body in GENERIC_MEDIA_BODIES -> currentMessage.body
+            else -> if (incomingMessage.mediaFiles.size > currentMessage.mediaFiles.size) {
+                incomingMessage.body
+            } else {
+                currentMessage.body
+            }
+        }
+        return current.copy(
+            message = currentMessage.copy(
+                body = body,
+                mediaFiles = (currentMessage.mediaFiles + incomingMessage.mediaFiles).distinctBy { it.absolutePath },
+                replyAction = incomingMessage.replyAction ?: currentMessage.replyAction,
+            ),
+        )
+    }
 
     fun publishIncoming(service: A8sService, message: IncomingMessage) {
         val config = A8sAndroid.config ?: return
-        val eventTimeMs = message.ingress?.eventTimeMs
-        val maxAgeMs = message.ingress?.maxAgeMs
-        if (eventTimeMs != null && maxAgeMs != null &&
-            IngressStaleness.isTooOld(eventTimeMs, maxAgeMs = maxAgeMs)) {
+        val eventTimeMs = message.ingress.eventTimeMs
+        val maxAgeMs = message.ingress.maxAgeMs
+        if (IngressStaleness.isTooOld(eventTimeMs, maxAgeMs = maxAgeMs)) {
             A8sAndroid.log(
                 "Ignored stale ingress from ${message.fromIdentity} " +
                     "(event ${ageMinutes(eventTimeMs)}m ago, max ${maxAgeMs / 60_000}m)",
             )
+            message.mediaFiles.forEach { it.delete() }
             return
         }
         val sender = resolveSender(service, config, message.fromIdentity) ?: return
+        service.submitPreparedIngress(PreparedIncoming(sender.principal.agent, sender.number, message))
+    }
+
+    internal fun processPrepared(service: A8sService, prepared: PreparedIncoming) {
+        val config = A8sAndroid.config ?: return
+        val sender = ResolvedSender(prepared.number, config.registry.principalByAgent(prepared.agent) ?: return)
+        val message = prepared.message
 
         if (isOutboundSmsEcho(sender.number, message.body)) {
             A8sAndroid.log(
@@ -103,16 +139,11 @@ object IncomingSmsRouter {
         body: String,
     ): Boolean = when (val result = SmsSlashCommand.classify(sender.number, body, config)) {
         is SmsSlashCommand.Result.Authorized -> {
-            val isQuery = result.command.name in CmdHelpers.QUERY_COMMANDS
-            if (isQuery || gateSmsOriginCommand(service, result.principal.agent, body)) {
-                A8sAndroid.log(
-                    "SMS command /${result.command.name} from ${result.principal.agent} " +
-                        "(${PhoneNormalize.maskNumber(sender.number)})",
-                )
-                CommandDispatch.handle(service, result.command, service::executeCommand)
-            } else {
-                A8sAndroid.log("SMS command /${result.command.name} ignored (duplicate)")
-            }
+            A8sAndroid.log(
+                "SMS command /${result.command.name} from ${result.principal.agent} " +
+                    "(${PhoneNormalize.maskNumber(sender.number)})",
+            )
+            CommandDispatch.handle(service, result.command, service::executeCommand)
             true
         }
         is SmsSlashCommand.Result.Forbidden -> {
@@ -158,11 +189,6 @@ object IncomingSmsRouter {
     }
 
     private fun publishOne(service: A8sService, config: A8sAndroid.Config, outbound: OutboundSms) {
-        val dedupKey = "${outbound.fromAgent}|${outbound.toAgent}|${outbound.body}"
-        if (!service.publishDedup.shouldPublish(dedupKey)) {
-            A8sAndroid.log("Skipping duplicate to ${outbound.toAgent} (already sent recently)")
-            return
-        }
         val payload = buildIncomingPayload(outbound.fromAgent, outbound.toAgent, outbound.body, outbound.filesArr)
         val (ok, fail) = service.publishToAllRemotes(config, payload)
         val fileNote = if (outbound.filesArr.length() > 0) "[+${outbound.filesArr.length()} file(s)] " else ""
@@ -205,4 +231,6 @@ object IncomingSmsRouter {
             null
         }
     }
+
+    private val GENERIC_MEDIA_BODIES = setOf("[MMS media]", "Audio clip")
 }

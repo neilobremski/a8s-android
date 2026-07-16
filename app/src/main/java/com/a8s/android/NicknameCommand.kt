@@ -6,7 +6,7 @@ import java.util.Locale
 object NicknameCommand {
 
     const val USAGE: String =
-        "usage: /nicknames add <nickname> for <agent> | replace <nickname> for <agent> | " +
+        "usage: /nicknames add <nickname words> for <agent> | replace <nickname words> for <agent> | " +
             "remove <nickname> | list [for <agent>] | enable | disable | status"
 
     sealed class Action {
@@ -39,23 +39,24 @@ object NicknameCommand {
     }
 
     private fun parseAdd(args: List<String>, replace: Boolean): Action {
-        if (args.size != 4 || !args[2].equals("for", ignoreCase = true)) {
+        val delimiter = args.indexOfLast { it.equals("for", ignoreCase = true) }
+        if (delimiter < 2 || delimiter != args.lastIndex - 1) {
             return Action.Invalid("expected '${args[0]} <nickname> for <agent>'")
         }
-        val nickname = normalizeNickname(args[1])
-            ?: return Action.Invalid("nickname must be one lowercase A8S name token")
+        val nickname = normalizeNickname(args.subList(1, delimiter).joinToString(" "))
+            ?: return Action.Invalid("nickname must contain letters, numbers, spaces, '_' or '-'")
         if (nickname in RESERVED) {
             return Action.Invalid("'$nickname' is reserved by /nicknames")
         }
-        val agent = normalizeTarget(args[3])
+        val agent = normalizeTarget(args[delimiter + 1])
             ?: return Action.Invalid("agent must be one A8S address token")
         return Action.Add(nickname, agent, replace)
     }
 
     private fun parseRemove(args: List<String>): Action {
-        if (args.size != 2) return Action.Invalid("expected '${args[0]} <nickname>'")
-        val nickname = normalizeNickname(args[1])
-            ?: return Action.Invalid("nickname must be one lowercase A8S name token")
+        if (args.size < 2) return Action.Invalid("expected '${args[0]} <nickname>'")
+        val nickname = normalizeNickname(args.drop(1).joinToString(" "))
+            ?: return Action.Invalid("nickname must contain letters, numbers, spaces, '_' or '-'")
         return Action.Remove(nickname)
     }
 
@@ -72,9 +73,13 @@ object NicknameCommand {
     private fun exactArity(args: List<String>, size: Int, action: () -> Action): Action =
         if (args.size == size) action() else Action.Invalid("'${args[0]}' takes no arguments")
 
-    private fun normalizeNickname(raw: String): String? {
-        val normalized = raw.trim().lowercase(Locale.ROOT)
-        return normalized.takeIf { NAME.matches(it) }
+    internal fun normalizeNickname(raw: String): String? {
+        val normalized = raw.lowercase(Locale.ROOT)
+            .split(Regex("\\s+"))
+            .map { word -> word.trim { it in PUNCTUATION } }
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+        return normalized.takeIf { it.isNotEmpty() && it.split(" ").all(NAME::matches) }
     }
 
     private fun normalizeTarget(raw: String): String? {
@@ -85,4 +90,5 @@ object NicknameCommand {
     private val NAME = Regex("[a-z0-9][a-z0-9_-]*")
     private val ADDRESS = Regex("[a-z0-9][a-z0-9_-]*(?::[a-z0-9][a-z0-9_-]*)*")
     private val RESERVED = setOf("add", "replace", "remove", "rm", "list", "enable", "disable", "status", "for")
+    private val PUNCTUATION = setOf('.', ',', '!', '?', ':', ';', '\'', '"', '(', ')', '[', ']')
 }

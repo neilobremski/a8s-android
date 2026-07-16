@@ -96,6 +96,8 @@ class MmsObserver(
                     body = body,
                     mediaFiles = mediaFiles,
                     ingress = IncomingSmsRouter.IngressMeta(
+                        source = IngressSource.MMS,
+                        sourceEventId = mmsId.toString(),
                         eventTimeMs = eventTimeMs,
                         maxAgeMs = IngressStaleness.SMS_MAX_AGE_MS,
                     ),

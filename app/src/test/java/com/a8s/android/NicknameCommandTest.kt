@@ -39,9 +39,18 @@ class NicknameCommandTest {
     }
 
     @Test
-    fun `multiword nickname is rejected by exact arity`() {
+    fun `multiword nickname is accepted and normalized`() {
         val result = NicknameCommand.parse(listOf("add", "the", "boss", "for", "claude-code"))
-        assertInstanceOf(NicknameCommand.Action.Invalid::class.java, result)
+        val add = assertInstanceOf(NicknameCommand.Action.Add::class.java, result)
+        assertEquals("the boss", add.nickname)
+        assertEquals("claude-code", add.agent)
+    }
+
+    @Test
+    fun `spoken punctuation is trimmed`() {
+        val result = NicknameCommand.parse(listOf("add", "Alice,", "Node!", "for", "alice-node"))
+        val add = assertInstanceOf(NicknameCommand.Action.Add::class.java, result)
+        assertEquals("alice node", add.nickname)
     }
 
     @Test

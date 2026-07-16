@@ -15,35 +15,6 @@ import java.util.Locale
  */
 object CmdHelpers {
 
-    /**
-     * Upper bound on the text body of an SMS reply / forward. Command
-     * output (`/info` verbose, `/logs`, `/ls`, `/cat`) is otherwise
-     * unbounded and would fan out into many billable SMS segments and
-     * risk carrier truncation. ~8 segments of GSM-7.
-     */
-    const val MAX_SMS_REPLY_CHARS: Int = 160
-
-    /** Split [text] into chunks matching the configured limit. */
-    fun chunkForSms(text: String, config: A8sAndroid.Config? = A8sAndroid.config): List<String> {
-        val max = config?.smsTruncateLimit ?: 800
-        if (max <= 0 || text.length <= max) return listOf(text)
-
-        // Calculate chunk size leaving room for prefix "part X of Y: " (approx 15 chars max)
-        val prefixReserve = 20
-        val chunkSize = (max - prefixReserve).coerceAtLeast(10)
-        
-        val totalChunks = (text.length + chunkSize - 1) / chunkSize
-        val chunks = mutableListOf<String>()
-        
-        for (i in 0 until totalChunks) {
-            val start = i * chunkSize
-            val end = minOf(start + chunkSize, text.length)
-            val chunkText = text.substring(start, end)
-            chunks.add("part ${i + 1} of $totalChunks: $chunkText")
-        }
-        return chunks
-    }
-
     // ── /send ────────────────────────────────────────────────────────────
 
     data class SendParts(val number: String, val body: String)
