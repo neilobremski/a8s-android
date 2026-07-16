@@ -581,6 +581,7 @@ class A8sService : LifecycleService() {
             }
             if (tryPublish(client, rc.topic, bytes)) {
                 ok++
+                A8sAndroid.log("MQTT[$name] outbound publish sent (id=${JSONObject(payload).optString("id")})")
             } else {
                 A8sAndroid.log("MQTT[$name] publish failed, queuing for retry")
                 retryQueue.enqueue(name, rc.topic, bytes)
