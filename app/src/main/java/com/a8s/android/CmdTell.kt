@@ -21,7 +21,8 @@ object CmdTell {
             service.replyToSender(config, cmd, "tell failed: sender is not a phone-backed agent")
             return
         }
-        val resolution = NicknamesManager.resolveDetailed(service, parts.rawAgent)
+        val canonicalNames = config.registry.localAgents + config.device
+        val resolution = NicknamesManager.resolveDetailed(service, parts.rawAgent, canonicalNames)
         val resolutionKind = when {
             !resolution.enabled -> "disabled"
             resolution.matched -> "matched"

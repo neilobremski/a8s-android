@@ -51,6 +51,31 @@ class NicknameCommandTest {
     }
 
     @Test
+    fun `known canonical names conflict case insensitively`() {
+        assertTrue(
+            NicknameCommand.conflictsWithCanonicalName(
+                "Alice",
+                device = "operator-phone",
+                agents = setOf("alice", "bob"),
+            ),
+        )
+        assertTrue(
+            NicknameCommand.conflictsWithCanonicalName(
+                "OPERATOR-PHONE",
+                device = "operator-phone",
+                agents = setOf("alice"),
+            ),
+        )
+        assertFalse(
+            NicknameCommand.conflictsWithCanonicalName(
+                "ally",
+                device = "operator-phone",
+                agents = setOf("alice"),
+            ),
+        )
+    }
+
+    @Test
     fun `list supports optional agent filter`() {
         assertEquals(NicknameCommand.Action.ListFor(null), NicknameCommand.parse(listOf("list")))
         assertEquals(

@@ -4,6 +4,18 @@ object CmdNicknames {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         when (val action = NicknameCommand.parse(cmd.args)) {
             is NicknameCommand.Action.Add -> {
+                if (NicknameCommand.conflictsWithCanonicalName(
+                        action.nickname,
+                        config.device,
+                        config.registry.localAgents,
+                    )) {
+                    service.replyToSender(
+                        config,
+                        cmd,
+                        "Nickname '${action.nickname}' conflicts with a canonical A8S name and cannot override it.",
+                    )
+                    return
+                }
                 val stored = NicknamesManager.putNickname(
                     service,
                     action.nickname,

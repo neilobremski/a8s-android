@@ -46,12 +46,20 @@ object NicknamesManager {
         context.getSharedPreferences(STATE_PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(ENABLED_KEY, true)
 
-    fun resolveDetailed(context: Context, name: String): Resolution {
+    fun resolveDetailed(context: Context, name: String, canonicalNames: Set<String> = emptySet()): Resolution =
+        resolveFromMappings(name, isEnabled(context), getAll(context), canonicalNames)
+
+    internal fun resolveFromMappings(
+        name: String,
+        enabled: Boolean,
+        mappings: Map<String, String>,
+        canonicalNames: Set<String>,
+    ): Resolution {
         val normalized = name.trim().lowercase(Locale.ROOT)
-        val enabled = isEnabled(context)
         if (!enabled) return Resolution(name, normalized, normalized, matched = false, enabled = false)
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val mapped = prefs.getString(normalized, null)
+        val canonical = canonicalNames.any { it.trim().lowercase(Locale.ROOT) == normalized }
+        if (canonical) return Resolution(name, normalized, normalized, matched = false, enabled = true)
+        val mapped = mappings[normalized]
         return Resolution(name, normalized, mapped ?: normalized, mapped != null, enabled = true)
     }
 

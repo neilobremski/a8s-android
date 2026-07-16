@@ -101,10 +101,10 @@ the PR will fail.
 | `SmsCommandDelivery.kt` | Phone-agent SMS forward + SMS reply body building (inline storage URLs). |
 | `CmdTell.kt` | `/tell <agent> <message>` — MQTT publish with phone principal as `from`. |
 | `NicknameCommand.kt` | Pure parser for `/nicknames add <nickname> for <agent>` and related list/remove/enable/disable/status actions. Normalizes names to lowercase, requires the literal `for`, rejects multiword/reserved nicknames, and makes replacement explicit. |
-| `CmdNicknames.kt` / `NicknamesManager.kt` | Nickname command handler + SharedPreferences store. Mapping and enabled-state preferences are separate; direct `/tell` targets and resolved destinations normalize to lowercase. |
+| `CmdNicknames.kt` / `NicknamesManager.kt` | Nickname command handler + SharedPreferences store. Mapping and enabled-state preferences are separate; direct `/tell` targets and resolved destinations normalize to lowercase. Known canonical device/principal names cannot be registered or overridden by nickname mappings. |
 | `Commands.kt` | Pure formatters for slash-command output. Consumes `InfoSnapshotter.InfoSnapshot` and renders via `renderInfo` / `renderLogs`. Keeps Android-specific gathering out of the formatter so it tests without a Context. |
 | `InfoSnapshotter.kt` | Android-side gatherer for `/info`. `capture(context, config, verbose)` builds `InfoSnapshot` (~150 fields in verbose mode). Field catalogue in `INFO_FIELD_RESEARCH.md`. |
-| `PublishDedup.kt` | Bounded dedup for inbound SMS/RCS → MQTT: 5-minute in-memory window plus 7-day persisted `from|to|body` keys in `inbound_publish_dedup.json`. Stops Google Messages notification re-posts and process-restart replays. |
+| `PublishDedup.kt` | Bounded dedup for inbound SMS/RCS → MQTT: 5-minute in-memory window plus up to 2,000 persisted `from|to|body` keys in `inbound_publish_dedup.json`. Persisted keys currently have no practical time expiry. Stops Google Messages notification re-posts and process-restart replays. |
 | `IngressStaleness.kt` | Drops ingress events older than 6h (RCS notification message time) or 48h (SMS/MMS PDU date). |
 | `NotificationIngress.kt` | Reads MessagingStyle message timestamps for RCS staleness (preferred over notification post time). |
 | `OutboundSmsEcho.kt` | Drops inbound SMS/RCS whose body matches a recent outbound multipart segment (prevents command-reply echoes publishing to `sms_inbound_agent`). |

@@ -32,6 +32,12 @@ object NicknameCommand {
         }
     }
 
+    fun conflictsWithCanonicalName(nickname: String, device: String, agents: Set<String>): Boolean {
+        val normalized = nickname.trim().lowercase(Locale.ROOT)
+        if (device.trim().lowercase(Locale.ROOT) == normalized) return true
+        return agents.any { it.trim().lowercase(Locale.ROOT) == normalized }
+    }
+
     private fun parseAdd(args: List<String>, replace: Boolean): Action {
         if (args.size != 4 || !args[2].equals("for", ignoreCase = true)) {
             return Action.Invalid("expected '${args[0]} <nickname> for <agent>'")

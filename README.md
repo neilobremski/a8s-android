@@ -110,8 +110,8 @@ verbs).
 
 | Command | Description |
 |---|---|
-| `/tell <agent> <message>` | Publish an a8s envelope over MQTT. Agent and nickname targets normalize to lowercase. SMS-originated `/tell` uses the phone principal as `from`. |
-| `/nicknames add <nickname> for <agent>` | Add a lowercase, single-token nickname. Existing mappings require `replace` instead of `add`. |
+| `/tell <agent> <message>` | Publish an a8s envelope over MQTT. Agent and nickname targets normalize to lowercase; known canonical names always take precedence over nickname mappings. SMS-originated `/tell` uses the phone principal as `from`. |
+| `/nicknames add <nickname> for <agent>` | Add a lowercase, single-token nickname. A nickname cannot shadow a known canonical device/principal name. Existing mappings require `replace` instead of `add`. |
 | `/nicknames replace <nickname> for <agent>` | Explicitly replace an existing nickname mapping. |
 | `/nicknames remove <nickname>` | Remove a nickname mapping. |
 | `/nicknames list [for <agent>]` | List every nickname or only nicknames for one agent. Plain `/nicknames` also lists all mappings. |
