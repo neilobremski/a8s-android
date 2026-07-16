@@ -19,12 +19,23 @@ object CmdNicknames {
                     return
                 }
                 else -> {
-                    service.replyToSender(config, cmd, "usage: /nicknames <agent> add|rm <nickname>")
+                    service.replyToSender(config, cmd, "usage: /nicknames <agent> [add|rm <nickname>]")
                     return
                 }
             }
+        } else if (cmd.args.size == 1) {
+            val filterAgent = cmd.args[0].lowercase()
+            val all = NicknamesManager.getAll(service)
+            val filtered = all.filterValues { it.lowercase() == filterAgent }
+            val reply = if (filtered.isEmpty()) {
+                "No nicknames configured for $filterAgent."
+            } else {
+                "Nicknames for $filterAgent:\n" + filtered.keys.joinToString("\n")
+            }
+            service.replyToSender(config, cmd, reply)
+            return
         } else if (cmd.args.isNotEmpty()) {
-            service.replyToSender(config, cmd, "usage: /nicknames <agent> add|rm <nickname>")
+            service.replyToSender(config, cmd, "usage: /nicknames <agent> [add|rm <nickname>]")
             return
         }
         

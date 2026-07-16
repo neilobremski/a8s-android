@@ -8,7 +8,7 @@ object NicknamesManager {
     fun addNickname(context: Context, realAgent: String, nickname: String) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putString(nickname.lowercase(), realAgent.lowercase())
+            .putString(nickname.lowercase(), realAgent)
             .apply()
     }
 
