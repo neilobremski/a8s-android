@@ -9,6 +9,12 @@ class PublishRetryQueue(
 ) {
     private val pending = mutableMapOf<String, MutableList<PendingPublish>>()
     var publishFn: ((String, ByteArray) -> Boolean)? = null
+    var resultListener: ((String, ByteArray, Result) -> Unit)? = null
+
+    sealed class Result {
+        data object Accepted : Result()
+        data class Exhausted(val attempts: Int) : Result()
+    }
 
     data class PendingPublish(
         val topic: String,
@@ -38,6 +44,7 @@ class PublishRetryQueue(
             item.attempts++
             if (publishFn(item.topic, item.payload)) {
                 A8sAndroid.log("RetryQueue[$remoteName] flush accepted id=${payloadId(item.payload)}")
+                resultListener?.invoke(remoteName, item.payload, Result.Accepted)
                 iterator.remove()
             } else {
                 break
@@ -73,6 +80,7 @@ class PublishRetryQueue(
                     TransactionTrace.Status.FAIL,
                     "discarded after $maxAttempts attempts",
                 )
+                resultListener?.invoke(remoteName, item.payload, Result.Exhausted(maxAttempts))
                 iterator.remove()
                 continue
             }
@@ -81,6 +89,7 @@ class PublishRetryQueue(
                     "RetryQueue[$remoteName] retry accepted id=${payloadId(item.payload)} " +
                         "(attempt ${item.attempts})",
                 )
+                resultListener?.invoke(remoteName, item.payload, Result.Accepted)
                 iterator.remove()
             } else {
                 A8sAndroid.log(

@@ -80,6 +80,7 @@ class A8sService : LifecycleService() {
     private val retryQueue = PublishRetryQueue(
         scheduler = { delayMs, runnable -> handler.postDelayed(runnable, delayMs) },
     )
+    private val tellRetryTracker = TellRetryTracker()
     private var serviceStartMs: Long = 0L
     private var mmsObserver: MmsObserver? = null
     private val updateCheckRunnable = Runnable { checkForUpdate() }
@@ -125,6 +126,20 @@ class A8sService : LifecycleService() {
         registerSentResultReceiver()
         retryQueue.publishFn = { topic, payload ->
             tryPublishToAnyConnected(topic, payload)
+        }
+        retryQueue.resultListener = { remoteName, payload, result ->
+            val envelopeId = MqttPublishDiagnostics.metadata(payload).envelopeId
+            when (result) {
+                PublishRetryQueue.Result.Accepted -> tellRetryTracker.accepted(envelopeId)
+                is PublishRetryQueue.Result.Exhausted -> {
+                    tellRetryTracker.exhausted(envelopeId, remoteName, result.attempts)?.let { notice ->
+                        sendSms(
+                            notice.replyTo,
+                            "tell failed after ${notice.attempts} retries: ${notice.target}",
+                        )
+                    }
+                }
+            }
         }
         connectAll()
         startMmsObserver()
@@ -209,6 +224,7 @@ class A8sService : LifecycleService() {
         mmsObserver?.unregister()
         mmsObserver = null
         retryQueue.clear()
+        tellRetryTracker.clear()
         sentResultReceiver?.let {
             try { unregisterReceiver(it) } catch (_: Exception) { }
         }
@@ -406,6 +422,11 @@ class A8sService : LifecycleService() {
         )
         val (accepted, failed) = publishToAllRemotes(config, payload)
         return EnvelopePublishResult(envelopeId, accepted, failed)
+    }
+
+    internal fun watchTellRetries(envelopeId: String, replyTo: String, target: String) {
+        val remotes = A8sAndroid.config?.remotes?.keys.orEmpty()
+        tellRetryTracker.watch(envelopeId, replyTo, target, remotes)
     }
 
     internal fun buildFilesArrayForSms(

@@ -49,7 +49,7 @@ object CmdTell {
         if (result.total == 0) {
             service.replyToSender(config, cmd, "tell failed: no MQTT remotes configured")
         } else if (result.accepted == 0) {
-            service.replyToSender(config, cmd, "tell queued: MQTT disconnected; will retry")
+            service.watchTellRetries(result.envelopeId, cmd.smsReplyTo, resolution.resolved)
         }
     }
 
