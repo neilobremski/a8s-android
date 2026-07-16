@@ -405,6 +405,7 @@ class A8sService : LifecycleService() {
         to: String,
         content: String,
         files: org.json.JSONArray = org.json.JSONArray(),
+        tellFailureReplyTo: String? = null,
     ): EnvelopePublishResult {
         val config = A8sAndroid.config ?: return EnvelopePublishResult("", 0, 0)
         val envelopeId = Ulid.new()
@@ -420,13 +421,12 @@ class A8sService : LifecycleService() {
             "MQTT publish prepared id=${envelopeId.take(8)} from=$from to=$to " +
                 "(${content.length} chars, ${config.remotes.size} remote(s))",
         )
+        tellFailureReplyTo?.let { replyTo ->
+            tellRetryTracker.watch(envelopeId, replyTo, to, config.remotes.keys)
+        }
         val (accepted, failed) = publishToAllRemotes(config, payload)
+        if (accepted > 0) tellRetryTracker.accepted(envelopeId)
         return EnvelopePublishResult(envelopeId, accepted, failed)
-    }
-
-    internal fun watchTellRetries(envelopeId: String, replyTo: String, target: String) {
-        val remotes = A8sAndroid.config?.remotes?.keys.orEmpty()
-        tellRetryTracker.watch(envelopeId, replyTo, target, remotes)
     }
 
     internal fun buildFilesArrayForSms(

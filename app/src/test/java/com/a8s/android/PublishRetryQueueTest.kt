@@ -52,7 +52,6 @@ class PublishRetryQueueTest {
         repeat(3) {
             q.retryNow("r") { _, _ -> false }
         }
-        q.retryNow("r") { _, _ -> false }
         assertEquals(0, q.pendingCount("r"))
     }
 
@@ -63,7 +62,7 @@ class PublishRetryQueueTest {
         q.resultListener = { _, _, result -> results += result }
         q.enqueue("r", "t", "x".toByteArray())
 
-        repeat(3) { q.retryNow("r") { _, _ -> false } }
+        repeat(2) { q.retryNow("r") { _, _ -> false } }
 
         assertEquals(listOf(PublishRetryQueue.Result.Exhausted(2)), results)
     }
@@ -88,6 +87,31 @@ class PublishRetryQueueTest {
         q.retryNow("r") { _, _ -> true }
 
         assertEquals(listOf(PublishRetryQueue.Result.Accepted), results)
+    }
+
+    @Test
+    fun `terminal listener reports reconnect flush acceptance`() {
+        val q = makeQueue()
+        val results = mutableListOf<PublishRetryQueue.Result>()
+        q.resultListener = { _, _, result -> results += result }
+        q.enqueue("r", "t", "msg".toByteArray())
+
+        q.flushOnReconnect("r") { _, _ -> true }
+
+        assertEquals(listOf(PublishRetryQueue.Result.Accepted), results)
+    }
+
+    @Test
+    fun `reconnect flush enforces retry limit`() {
+        val q = makeQueue(maxAttempts = 2)
+        val results = mutableListOf<PublishRetryQueue.Result>()
+        q.resultListener = { _, _, result -> results += result }
+        q.enqueue("r", "t", "msg".toByteArray())
+
+        repeat(2) { q.flushOnReconnect("r") { _, _ -> false } }
+
+        assertEquals(listOf(PublishRetryQueue.Result.Exhausted(2)), results)
+        assertEquals(0, q.pendingCount("r"))
     }
 
     @Test
