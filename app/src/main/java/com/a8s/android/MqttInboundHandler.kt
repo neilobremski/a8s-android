@@ -49,8 +49,12 @@ object MqttInboundHandler {
                 CommandDispatch.handle(service, route, service::executeCommand)
             }
             is MqttRoute.Drop -> {
-                A8sAndroid.log("MQTT -> drop (${route.reason})")
-                recordDrop(txnId, from, to, route.reason, fileSummary)
+                if (route.reason.startsWith("self-loopback")) {
+                    recordLoopback(txnId, from, to, fileSummary)
+                } else {
+                    A8sAndroid.log("MQTT -> drop (${route.reason})")
+                    recordDrop(txnId, from, to, route.reason, fileSummary)
+                }
             }
             is MqttRoute.ParseError -> {
                 A8sAndroid.log("MQTT Handle Error: ${route.reason}")
@@ -67,6 +71,23 @@ object MqttInboundHandler {
                 )
             }
         }
+    }
+
+    private fun recordLoopback(txnId: String, from: String, to: String, fileSummary: String) {
+        A8sAndroid.log(
+            "MQTT broker loopback observed id=${txnId.take(8).ifEmpty { "?" }} from=$from to=$to",
+        )
+        TransactionTrace.record(
+            TransactionTrace.Event(
+                txnId = txnId,
+                flow = "MQTT_LOOP",
+                status = TransactionTrace.Status.OK,
+                from = from,
+                to = to,
+                summary = "broker returned self-published envelope",
+                detail = fileSummary,
+            ),
+        )
     }
 
     private fun recordDrop(txnId: String, from: String, to: String, reason: String, fileSummary: String) {

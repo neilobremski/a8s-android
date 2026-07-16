@@ -1,5 +1,7 @@
 package com.a8s.android
 
+import org.json.JSONObject
+
 class PublishRetryQueue(
     private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
     private val maxBackoffMs: Long = DEFAULT_MAX_BACKOFF_MS,
@@ -18,7 +20,10 @@ class PublishRetryQueue(
     fun enqueue(remoteName: String, topic: String, payload: ByteArray) {
         val list = pending.getOrPut(remoteName) { mutableListOf() }
         list += PendingPublish(topic, payload)
-        A8sAndroid.log("RetryQueue[$remoteName] enqueued (${list.size} pending)")
+        A8sAndroid.log(
+            "RetryQueue[$remoteName] enqueued id=${payloadId(payload)} (${list.size} pending)",
+        )
+        recordRetry(remoteName, payload, TransactionTrace.Status.PARTIAL, "queued for retry")
         scheduleRetry(remoteName)
     }
 
@@ -32,6 +37,7 @@ class PublishRetryQueue(
             val item = iterator.next()
             item.attempts++
             if (publishFn(item.topic, item.payload)) {
+                A8sAndroid.log("RetryQueue[$remoteName] flush accepted id=${payloadId(item.payload)}")
                 iterator.remove()
             } else {
                 break
@@ -57,15 +63,30 @@ class PublishRetryQueue(
             val item = iterator.next()
             item.attempts++
             if (item.attempts > maxAttempts) {
-                A8sAndroid.log("RetryQueue[$remoteName] discarding after $maxAttempts attempts")
+                A8sAndroid.log(
+                    "RetryQueue[$remoteName] discarding id=${payloadId(item.payload)} " +
+                        "after $maxAttempts attempts",
+                )
+                recordRetry(
+                    remoteName,
+                    item.payload,
+                    TransactionTrace.Status.FAIL,
+                    "discarded after $maxAttempts attempts",
+                )
                 iterator.remove()
                 continue
             }
             if (publishFn(item.topic, item.payload)) {
-                A8sAndroid.log("RetryQueue[$remoteName] retry OK (attempt ${item.attempts})")
+                A8sAndroid.log(
+                    "RetryQueue[$remoteName] retry accepted id=${payloadId(item.payload)} " +
+                        "(attempt ${item.attempts})",
+                )
                 iterator.remove()
             } else {
-                A8sAndroid.log("RetryQueue[$remoteName] retry failed (attempt ${item.attempts}/$maxAttempts)")
+                A8sAndroid.log(
+                    "RetryQueue[$remoteName] retry failed id=${payloadId(item.payload)} " +
+                        "(attempt ${item.attempts}/$maxAttempts)",
+                )
                 break
             }
         }
@@ -97,6 +118,31 @@ class PublishRetryQueue(
     @Synchronized
     fun clear() {
         pending.clear()
+    }
+
+    private fun payloadId(payload: ByteArray): String = try {
+        JSONObject(String(payload)).optString("id").take(8).ifEmpty { "?" }
+    } catch (_: Exception) {
+        "?"
+    }
+
+    private fun recordRetry(
+        remoteName: String,
+        payload: ByteArray,
+        status: TransactionTrace.Status,
+        summary: String,
+    ) {
+        val meta = MqttPublishDiagnostics.metadata(payload)
+        TransactionTrace.record(
+            TransactionTrace.Event(
+                txnId = meta.envelopeId,
+                flow = "MQTT_RETRY",
+                status = status,
+                from = meta.from,
+                to = meta.to,
+                summary = "$summary on $remoteName",
+            ),
+        )
     }
 
     companion object {

@@ -1,32 +1,72 @@
 package com.a8s.android
 
 import android.content.Context
+import java.util.Locale
 
 object NicknamesManager {
     private const val PREFS_NAME = "a8s_nicknames"
+    private const val STATE_PREFS_NAME = "a8s_nicknames_state"
+    private const val ENABLED_KEY = "enabled"
 
-    fun addNickname(context: Context, realAgent: String, nickname: String) {
+    data class Resolution(
+        val input: String,
+        val normalized: String,
+        val resolved: String,
+        val matched: Boolean,
+        val enabled: Boolean,
+    )
+
+    fun putNickname(context: Context, nickname: String, realAgent: String, replace: Boolean): Boolean {
+        val normalizedNickname = nickname.lowercase(Locale.ROOT)
+        val normalizedAgent = realAgent.lowercase(Locale.ROOT)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (!replace && prefs.contains(normalizedNickname)) return false
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
-            .putString(nickname.lowercase(), realAgent.lowercase())
+            .putString(normalizedNickname, normalizedAgent)
             .apply()
+        return true
     }
 
     fun removeNickname(context: Context, nickname: String) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
-            .remove(nickname.lowercase())
+            .remove(nickname.lowercase(Locale.ROOT))
             .apply()
     }
 
-    fun resolve(context: Context, name: String): String {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(name.lowercase(), null) ?: name
+    fun setEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(STATE_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(ENABLED_KEY, enabled)
+            .apply()
+    }
+
+    fun isEnabled(context: Context): Boolean =
+        context.getSharedPreferences(STATE_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(ENABLED_KEY, true)
+
+    fun resolveDetailed(context: Context, name: String, canonicalNames: Set<String> = emptySet()): Resolution =
+        resolveFromMappings(name, isEnabled(context), getAll(context), canonicalNames)
+
+    internal fun resolveFromMappings(
+        name: String,
+        enabled: Boolean,
+        mappings: Map<String, String>,
+        canonicalNames: Set<String>,
+    ): Resolution {
+        val normalized = name.trim().lowercase(Locale.ROOT)
+        if (!enabled) return Resolution(name, normalized, normalized, matched = false, enabled = false)
+        val canonical = canonicalNames.any { it.trim().lowercase(Locale.ROOT) == normalized }
+        if (canonical) return Resolution(name, normalized, normalized, matched = false, enabled = true)
+        val mapped = mappings[normalized]
+        return Resolution(name, normalized, mapped ?: normalized, mapped != null, enabled = true)
     }
 
     fun getAll(context: Context): Map<String, String> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        @Suppress("UNCHECKED_CAST")
-        return prefs.all as Map<String, String>
+        return prefs.all.mapNotNull { (key, value) ->
+            (value as? String)?.let { key to it }
+        }.toMap()
     }
 }

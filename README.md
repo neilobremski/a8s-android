@@ -110,7 +110,13 @@ verbs).
 
 | Command | Description |
 |---|---|
-| `/tell <agent> <message>` | Publish an a8s envelope over MQTT. SMS-originated `/tell` uses the phone principal as `from`. |
+| `/tell <agent> <message>` | Publish an a8s envelope over MQTT. Agent and nickname targets normalize to lowercase; known canonical names always take precedence over nickname mappings. SMS-originated `/tell` uses the phone principal as `from`. |
+| `/nicknames add <nickname> for <agent>` | Add a lowercase, single-token nickname. A nickname cannot shadow a known canonical device/principal name. Existing mappings require `replace` instead of `add`. |
+| `/nicknames replace <nickname> for <agent>` | Explicitly replace an existing nickname mapping. |
+| `/nicknames remove <nickname>` | Remove a nickname mapping. |
+| `/nicknames list [for <agent>]` | List every nickname or only nicknames for one agent. Plain `/nicknames` also lists all mappings. |
+| `/nicknames enable\|disable\|status` | Control or inspect nickname resolution. Disabling leaves stored mappings intact. |
+| `/trace [N]` | Show structured transaction events, including `/tell` resolution, MQTT client acceptance, broker acknowledgment, retry, and broker loopback under one envelope ULID. |
 | `/info` | App version, device model, Android release, MQTT state, network, battery, memory, storage, display, power, permissions, services, uptime, config. Add `verbose` (or `-v` / `--verbose`) for the full ~150-field dump (identifiers, Wi-Fi SSID/BSSID, IPs, sensors, last-known location, camera details, etc.). See `INFO_FIELD_RESEARCH.md` for the full field catalogue. |
 | `/logs [N]` | Last `N` lines of the in-app log buffer (default 50, max 500). |
 | `/send <number> <message>` | Send an SMS to an explicit phone number. |

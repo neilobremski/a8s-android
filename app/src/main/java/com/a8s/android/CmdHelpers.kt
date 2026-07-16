@@ -1,5 +1,7 @@
 package com.a8s.android
 
+import java.util.Locale
+
 /**
  * Pure-Kotlin helpers for the device-capability slash commands
  * (`/photo`, `/video`, `/location`, `/say`, `/notify`, `/ls`, `/cat`,
@@ -292,12 +294,13 @@ object CmdHelpers {
 
     // ── /tell ─────────────────────────────────────────────────────────────
 
-    data class TellParts(val agent: String, val message: String)
+    data class TellParts(val rawAgent: String, val agent: String, val message: String)
 
-    fun parseTellArgs(args: List<String>, resolver: (String) -> String = { it }): TellParts? {
+    fun parseTellArgs(args: List<String>): TellParts? {
         if (args.size < 2) return null
-        val agent = args[0].trimEnd(',', '.', '!', '?', ':', ';')
-        return TellParts(resolver(agent), args.drop(1).joinToString(" "))
+        val rawAgent = args[0].trimEnd(',', '.', '!', '?', ':', ';')
+        val agent = rawAgent.lowercase(Locale.ROOT)
+        return TellParts(rawAgent, agent, args.drop(1).joinToString(" "))
     }
 
     // ── /<unknown> ───────────────────────────────────────────────────────
@@ -315,7 +318,7 @@ object CmdHelpers {
         "/mms <number> <url>",
         "/reply <number> <text>",
         "/tell <agent> <message>",
-        "/nicknames <agent> add|rm <nickname>",
+        "/nicknames add <nickname> for <agent>",
         "/update [--check|<url>]",
         "/screenshot",
         "/photo [front|back]",
