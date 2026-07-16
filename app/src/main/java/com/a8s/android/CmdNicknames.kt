@@ -19,14 +19,32 @@ object CmdNicknames {
                     return
                 }
                 else -> {
-                    service.replyToSender(config, cmd, "usage: /nicknames <agent> [add|rm <nickname>]")
+                    service.replyToSender(config, cmd, "usage: /nicknames [enable|disable|status] OR /nicknames <agent> [add|rm <nickname>]")
                     return
                 }
             }
         } else if (cmd.args.size == 1) {
             val filterAgent = cmd.args[0].lowercase()
+            when (filterAgent) {
+                "enable" -> {
+                    NicknamesManager.setEnabled(service, true)
+                    service.replyToSender(config, cmd, "Nicknames feature is now ENABLED.")
+                    return
+                }
+                "disable" -> {
+                    NicknamesManager.setEnabled(service, false)
+                    service.replyToSender(config, cmd, "Nicknames feature is now DISABLED.")
+                    return
+                }
+                "status" -> {
+                    val status = if (NicknamesManager.isEnabled(service)) "ENABLED" else "DISABLED"
+                    service.replyToSender(config, cmd, "Nicknames feature is currently $status.")
+                    return
+                }
+            }
             val all = NicknamesManager.getAll(service)
-            val filtered = all.filterValues { it.lowercase() == filterAgent }
+            // filter out the feature_enabled boolean which might be in the map
+            val filtered = all.filter { it.key != "feature_enabled" && it.value.toString().lowercase() == filterAgent }
             val reply = if (filtered.isEmpty()) {
                 "No nicknames configured for $filterAgent."
             } else {
@@ -35,7 +53,7 @@ object CmdNicknames {
             service.replyToSender(config, cmd, reply)
             return
         } else if (cmd.args.isNotEmpty()) {
-            service.replyToSender(config, cmd, "usage: /nicknames <agent> [add|rm <nickname>]")
+            service.replyToSender(config, cmd, "usage: /nicknames [enable|disable|status] OR /nicknames <agent> [add|rm <nickname>]")
             return
         }
         

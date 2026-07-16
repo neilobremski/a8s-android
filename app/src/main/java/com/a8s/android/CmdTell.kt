@@ -23,7 +23,10 @@ object CmdTell {
         }
         val (ok, fail) = service.publishEnvelope(fromAgent, parts.agent, parts.message)
         if (ok > 0) {
+            A8sAndroid.log("tell command successfully routed to MQTT for ${parts.agent}")
             IncomingSmsRouter.setLastTellTarget(service, fromAgent, parts.agent)
+            val info = if (fail > 0) " (warning: $fail remote(s) offline)" else ""
+            // Not sending a reply on success because the target agent will reply anyway.
         } else {
             service.replyToSender(config, cmd, "tell failed: 0 remotes reached")
         }

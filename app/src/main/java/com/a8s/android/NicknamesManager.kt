@@ -19,7 +19,20 @@ object NicknamesManager {
             .apply()
     }
 
+    fun setEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("feature_enabled", enabled)
+            .apply()
+    }
+
+    fun isEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("feature_enabled", false)
+    }
+
     fun resolve(context: Context, name: String): String {
+        if (!isEnabled(context)) return name
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return prefs.getString(name.lowercase(), null) ?: name
     }
