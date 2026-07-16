@@ -32,27 +32,38 @@ object CmdTell {
                 "resolved=${resolution.resolved} nickname=$resolutionKind",
         )
         val result = service.publishEnvelope(fromAgent, resolution.resolved, parts.message)
-        val status = when {
-            result.total == 0 -> TransactionTrace.Status.FAIL
-            result.accepted == result.total -> TransactionTrace.Status.OK
-            result.accepted > 0 -> TransactionTrace.Status.PARTIAL
-            else -> TransactionTrace.Status.FAIL
-        }
         TransactionTrace.record(
             TransactionTrace.Event(
                 txnId = result.envelopeId,
                 flow = "TELL_OUT",
-                status = status,
+                status = deliveryStatus(result),
                 from = fromAgent,
                 to = resolution.resolved,
-                summary = "nickname $resolutionKind; ${result.accepted}/${result.total} remote(s) accepted",
+                summary = "nickname $resolutionKind; ${deliverySummary(result)}",
                 detail = "raw target: ${resolution.input}\nnormalized target: ${resolution.normalized}",
             ),
         )
-        if (result.accepted > 0) {
+        if (result.accepted > 0 || result.failed > 0) {
             IncomingSmsRouter.setLastTellTarget(service, fromAgent, resolution.resolved)
-        } else {
-            service.replyToSender(config, cmd, "tell failed: 0 remotes reached")
         }
+        if (result.total == 0) {
+            service.replyToSender(config, cmd, "tell failed: no MQTT remotes configured")
+        } else if (result.accepted == 0) {
+            service.replyToSender(config, cmd, "tell queued: MQTT disconnected; will retry")
+        }
+    }
+
+    private fun deliveryStatus(result: EnvelopePublishResult): TransactionTrace.Status = when {
+        result.total == 0 -> TransactionTrace.Status.FAIL
+        result.accepted == 0 -> TransactionTrace.Status.PARTIAL
+        result.accepted == result.total -> TransactionTrace.Status.OK
+        else -> TransactionTrace.Status.PARTIAL
+    }
+
+    private fun deliverySummary(result: EnvelopePublishResult): String = when {
+        result.total == 0 -> "no MQTT remotes configured"
+        result.accepted == 0 -> "queued for retry; no MQTT remotes connected"
+        result.failed > 0 -> "${result.accepted}/${result.total} remote(s) accepted; ${result.failed} queued"
+        else -> "${result.accepted}/${result.total} remote(s) accepted"
     }
 }
