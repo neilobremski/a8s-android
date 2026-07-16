@@ -417,9 +417,12 @@ class A8sService : LifecycleService() {
         if (!smsReplyTo.isNullOrBlank()) {
             Thread {
                 val smsBody = SmsCommandDelivery.smsBodyWithUploads(this, config, body, files)
-                sendSms(smsReplyTo, smsBody)
+                val chunks = CmdHelpers.chunkForSms(smsBody, config)
+                for (chunk in chunks) {
+                    sendSms(smsReplyTo, chunk)
+                }
                 A8sAndroid.log(
-                    "CMD -> SMS $smsReplyTo (${smsBody.length} chars, ${files.size} file(s))",
+                    "CMD -> SMS $smsReplyTo (${smsBody.length} chars, ${files.size} file(s), ${chunks.size} part(s))",
                 )
             }.start()
             return
