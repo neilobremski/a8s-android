@@ -45,27 +45,16 @@ object SmsCommandDelivery {
         maskedTo: String,
         attributed: String,
     ) {
-        var extraFiles = emptyList<EnvelopeFile>()
-        val limit = A8sAndroid.config?.smsTruncateLimit ?: 800
-        val overLimit = limit > 0 && attributed.length > limit
-        if (overLimit) {
-            try {
-                val tempFile = File.createTempFile("full-message-", ".txt", service.cacheDir)
-                tempFile.writeText(attributed)
-                val config = A8sAndroid.config
-                if (config != null) {
-                    val arr = service.buildFilesArrayForSms(config, listOf(tempFile))
-                    extraFiles = envelopeFilesFromJSONArray(arr)
-                }
-            } catch (e: Exception) {
-                A8sAndroid.log("Failed to upload truncated text: ${e.message}")
-            }
+        val allEnvelopeFiles = forward.files
+        val fileDetail = summarizeForwardFiles(allEnvelopeFiles)
+        val finalBody = CmdHelpers.buildSendBody(attributed, allEnvelopeFiles)
+        val chunks = CmdHelpers.chunkForSms(finalBody, A8sAndroid.config)
+        
+        for (chunk in chunks) {
+            service.sendSms(forward.smsToNumber, chunk)
         }
 
-        val allEnvelopeFiles = forward.files + extraFiles
-        val fileDetail = summarizeForwardFiles(allEnvelopeFiles)
         if (allEnvelopeFiles.isEmpty()) {
-            service.sendSms(forward.smsToNumber, CmdHelpers.capForSms(attributed))
             TransactionTrace.record(
                 TransactionTrace.Event(
                     txnId = txnId,
@@ -74,13 +63,12 @@ object SmsCommandDelivery {
                     from = forward.from,
                     to = maskedTo,
                     summary = "text: ${service.preview(forward.content)}",
-                    detail = "files: none\nsms: sent text-only",
+                    detail = "files: none\nsms: sent in ${chunks.size} part(s)",
                 ),
             )
             return
         }
-        val body = CmdHelpers.buildSendBody(CmdHelpers.capForSms(attributed), allEnvelopeFiles)
-        service.sendSms(forward.smsToNumber, body)
+        
         val withUrls = allEnvelopeFiles.count { it.storageUrls.isNotEmpty() }
         val status = when {
             withUrls == allEnvelopeFiles.size -> TransactionTrace.Status.OK
@@ -88,9 +76,10 @@ object SmsCommandDelivery {
             else -> TransactionTrace.Status.FAIL
         }
         val smsNote = when {
-            withUrls == 0 -> "sms: sent text-only — no storage url(s) in envelope"
-            withUrls < allEnvelopeFiles.size -> "sms: sent with inline URL(s) for $withUrls/${allEnvelopeFiles.size} file(s)"
-            else -> "sms: sent with inline URL(s) for all file(s)"
+            withUrls == 0 -> "sms: sent in ${chunks.size} part(s) — no storage url(s) in envelope"
+            withUrls < allEnvelopeFiles.size -> 
+                "sms: sent in ${chunks.size} part(s) with inline URL(s) for $withUrls/${allEnvelopeFiles.size} file(s)"
+            else -> "sms: sent in ${chunks.size} part(s) with inline URL(s) for all file(s)"
         }
         TransactionTrace.record(
             TransactionTrace.Event(
@@ -121,28 +110,14 @@ object SmsCommandDelivery {
         files: List<File>,
         existingEnvelopeFiles: List<EnvelopeFile> = emptyList(),
     ): String {
-        val capped = CmdHelpers.capForSms(text)
-        var allFiles = files
-        val limit = config.smsTruncateLimit
-        val overLimit = limit > 0 && text.length > limit
-        if (overLimit) {
-            try {
-                val tempFile = File.createTempFile("full-message-", ".txt", service.cacheDir)
-                tempFile.writeText(text)
-                allFiles = allFiles + tempFile
-            } catch (e: Exception) {
-                A8sAndroid.log("Failed to write truncated text to file: ${e.message}")
-            }
-        }
-        val uploadedEnvelopeFiles = if (allFiles.isNotEmpty()) {
-            val arr = service.buildFilesArrayForSms(config, allFiles)
+        val uploadedEnvelopeFiles = if (files.isNotEmpty()) {
+            val arr = service.buildFilesArrayForSms(config, files)
             envelopeFilesFromJSONArray(arr)
         } else {
             emptyList()
         }
         val allEnvelopeFiles = existingEnvelopeFiles + uploadedEnvelopeFiles
-        if (allEnvelopeFiles.isEmpty()) return capped
-        return CmdHelpers.buildSendBody(capped, allEnvelopeFiles)
+        return CmdHelpers.buildSendBody(text, allEnvelopeFiles)
     }
 
     private fun envelopeFilesFromJSONArray(arr: JSONArray): List<EnvelopeFile> {

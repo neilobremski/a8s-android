@@ -103,7 +103,8 @@ object IncomingSmsRouter {
         body: String,
     ): Boolean = when (val result = SmsSlashCommand.classify(sender.number, body, config)) {
         is SmsSlashCommand.Result.Authorized -> {
-            if (gateSmsOriginCommand(service, result.principal.agent, body)) {
+            val isQuery = result.command.name in CmdHelpers.QUERY_COMMANDS
+            if (isQuery || gateSmsOriginCommand(service, result.principal.agent, body)) {
                 A8sAndroid.log(
                     "SMS command /${result.command.name} from ${result.principal.agent} " +
                         "(${PhoneNormalize.maskNumber(sender.number)})",

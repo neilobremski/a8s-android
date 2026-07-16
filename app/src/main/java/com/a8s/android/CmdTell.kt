@@ -7,7 +7,7 @@ package com.a8s.android
 object CmdTell {
 
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
-        val parts = CmdHelpers.parseTellArgs(cmd.args)
+        val parts = CmdHelpers.parseTellArgs(cmd.args) { NicknamesManager.resolve(service, it) }
         if (parts == null) {
             service.replyToSender(config, cmd, "usage: /tell <agent> <message>")
             return
