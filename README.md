@@ -120,7 +120,7 @@ verbs).
 
 | Command | Description |
 |---|---|
-| `/tell <agent-or-nickname> <message>` | Publish an a8s envelope over MQTT. Multiword nicknames use exact longest-leading-phrase matching; canonical first-token names take precedence. There is no fuzzy matching. SMS-originated `/tell` uses the phone principal as `from`. |
+| `/tell <agent-or-nickname> <message>` | Publish an a8s envelope over MQTT. Multiword nicknames use exact longest-leading-phrase matching; canonical first-token names take precedence. There is no fuzzy matching. SMS-originated `/tell` uses the phone principal as `from`. Disconnected publishes retry silently; SMS reports a failure only if all configured remotes exhaust 10 attempts. |
 | `/nicknames add <nickname words> for <agent>` | Add a case-insensitive spoken nickname. Surrounding punctuation and repeated whitespace normalize away. A nickname cannot shadow a known canonical device/principal name. Existing mappings require `replace` instead of `add`. |
 | `/nicknames replace <nickname words> for <agent>` | Explicitly replace an existing nickname mapping. |
 | `/nicknames remove <nickname words>` | Remove a nickname mapping. |

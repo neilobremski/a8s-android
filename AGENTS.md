@@ -99,7 +99,7 @@ the PR will fail.
 | `IncomingSmsRouter.kt` | SMS/RCS ingress: phone-principal match, SMS-originated slash commands, fall-through publish as phone agent. |
 | `SmsSlashCommand.kt` | Classify inbound SMS bodies as authorized/forbidden/not-a-command using role policy. |
 | `SmsCommandDelivery.kt` | Phone-agent SMS forward + SMS reply body building (inline storage URLs). |
-| `CmdTell.kt` | `/tell <agent> <message>` — MQTT publish with phone principal as `from`. |
+| `CmdTell.kt` | `/tell <agent> <message>` — MQTT publish with phone principal as `from`. Disconnected queues are silent; terminal failure is reported only after every configured remote exhausts retries. |
 | `NicknameCommand.kt` | Pure parser for `/nicknames add <nickname words> for <agent>` and related list/remove/enable/disable/status actions. Normalizes case, whitespace, and surrounding punctuation; requires the literal `for`; rejects reserved nicknames; and makes replacement explicit. |
 | `CmdNicknames.kt` / `NicknamesManager.kt` | Nickname command handler + SharedPreferences store. Mapping and enabled-state preferences are separate; direct `/tell` targets and resolved destinations normalize to lowercase. Known canonical device/principal names cannot be registered or overridden by nickname mappings. |
 | `Commands.kt` | Pure formatters for slash-command output. Consumes `InfoSnapshotter.InfoSnapshot` and renders via `renderInfo` / `renderLogs`. Keeps Android-specific gathering out of the formatter so it tests without a Context. |
@@ -113,7 +113,8 @@ the PR will fail.
 | `CommandDispatch.kt` | Thin wrapper: dedup gate + log + delegate to `A8sService.executeCommand`. Extracted to keep `A8sService` under detekt's `LargeClass` limit. |
 | `MqttInboundHandler.kt` | Inbound MQTT dispatch + `TransactionTrace` recording (phone-agent forward, command, drop). |
 | `TransactionTrace.kt` | Bounded transaction ring (100 entries) surfaced via `/trace [N]`. |
-| `PublishRetryQueue.kt` | Per-remote FIFO of failed MQTT publishes. Exponential backoff (1s base, 30s cap, 10 attempts max). `flushOnReconnect` drains on successful connect; `publishFn` retries against any connected client. Unit-tested. |
+| `PublishRetryQueue.kt` | Per-remote FIFO of failed MQTT publishes. Exponential backoff (1s base, 30s cap, 10 attempts max). `flushOnReconnect` drains on successful connect; `publishFn` retries against any connected client; `resultListener` reports retry acceptance or terminal exhaustion. Unit-tested. |
+| `TellRetryTracker.kt` | Bounded, body-free aggregation of `/tell` retry outcomes across remotes. Any accepted retry clears the watch silently; only exhaustion of every remote yields one SMS failure notice. |
 | `MqttPublishDiagnostics.kt` | Correlates outbound MQTT client acceptance, broker acknowledgment/failure, and transaction trace events by envelope ULID without logging message bodies or credentials. Self-published envelopes returning from the subscribed topic record `MQTT_LOOP`. |
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
 | `Updater.kt` | `/update` plumbing — fetches GitHub Releases JSON, picks the `a8s-android-*-debug.apk` asset, downloads it, and `compareVersions` to decide if newer. The actual install kicks off via `ACTION_VIEW` + FileProvider in `A8sService.triggerInstallPrompt`. JSON parsing + version compare are unit-tested; HTTP and FileProvider sit in thin Android-only wrappers. |

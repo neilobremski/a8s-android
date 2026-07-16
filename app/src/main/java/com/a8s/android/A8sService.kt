@@ -80,6 +80,7 @@ class A8sService : LifecycleService() {
     private val retryQueue = PublishRetryQueue(
         scheduler = { delayMs, runnable -> handler.postDelayed(runnable, delayMs) },
     )
+    private val tellRetryTracker = TellRetryTracker()
     private var serviceStartMs: Long = 0L
     private var mmsObserver: MmsObserver? = null
     private val updateCheckRunnable = Runnable { checkForUpdate() }
@@ -125,6 +126,20 @@ class A8sService : LifecycleService() {
         registerSentResultReceiver()
         retryQueue.publishFn = { topic, payload ->
             tryPublishToAnyConnected(topic, payload)
+        }
+        retryQueue.resultListener = { remoteName, payload, result ->
+            val envelopeId = MqttPublishDiagnostics.metadata(payload).envelopeId
+            when (result) {
+                PublishRetryQueue.Result.Accepted -> tellRetryTracker.accepted(envelopeId)
+                is PublishRetryQueue.Result.Exhausted -> {
+                    tellRetryTracker.exhausted(envelopeId, remoteName, result.attempts)?.let { notice ->
+                        sendSms(
+                            notice.replyTo,
+                            "tell failed after ${notice.attempts} retries: ${notice.target}",
+                        )
+                    }
+                }
+            }
         }
         connectAll()
         startMmsObserver()
@@ -209,6 +224,7 @@ class A8sService : LifecycleService() {
         mmsObserver?.unregister()
         mmsObserver = null
         retryQueue.clear()
+        tellRetryTracker.clear()
         sentResultReceiver?.let {
             try { unregisterReceiver(it) } catch (_: Exception) { }
         }
@@ -389,6 +405,7 @@ class A8sService : LifecycleService() {
         to: String,
         content: String,
         files: org.json.JSONArray = org.json.JSONArray(),
+        tellFailureReplyTo: String? = null,
     ): EnvelopePublishResult {
         val config = A8sAndroid.config ?: return EnvelopePublishResult("", 0, 0)
         val envelopeId = Ulid.new()
@@ -404,7 +421,11 @@ class A8sService : LifecycleService() {
             "MQTT publish prepared id=${envelopeId.take(8)} from=$from to=$to " +
                 "(${content.length} chars, ${config.remotes.size} remote(s))",
         )
+        tellFailureReplyTo?.let { replyTo ->
+            tellRetryTracker.watch(envelopeId, replyTo, to, config.remotes.keys)
+        }
         val (accepted, failed) = publishToAllRemotes(config, payload)
+        if (accepted > 0) tellRetryTracker.accepted(envelopeId)
         return EnvelopePublishResult(envelopeId, accepted, failed)
     }
 

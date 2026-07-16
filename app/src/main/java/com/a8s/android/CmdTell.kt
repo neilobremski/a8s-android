@@ -31,7 +31,12 @@ object CmdTell {
             "TELL resolve raw=${resolution.rawTarget} normalized=${resolution.normalizedTarget} " +
                 "resolved=${resolution.resolved} nickname=$resolutionKind",
         )
-        val result = service.publishEnvelope(fromAgent, resolution.resolved, resolution.message)
+        val result = service.publishEnvelope(
+            fromAgent,
+            resolution.resolved,
+            resolution.message,
+            tellFailureReplyTo = cmd.smsReplyTo,
+        )
         TransactionTrace.record(
             TransactionTrace.Event(
                 txnId = result.envelopeId,
@@ -48,8 +53,6 @@ object CmdTell {
         }
         if (result.total == 0) {
             service.replyToSender(config, cmd, "tell failed: no MQTT remotes configured")
-        } else if (result.accepted == 0) {
-            service.replyToSender(config, cmd, "tell queued: MQTT disconnected; will retry")
         }
     }
 
