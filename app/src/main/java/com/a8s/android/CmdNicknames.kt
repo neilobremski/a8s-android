@@ -2,37 +2,54 @@ package com.a8s.android
 
 object CmdNicknames {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
-        if (cmd.args.size >= 3) {
-            val realAgent = cmd.args[0]
-            val action = cmd.args[1].lowercase()
-            val nickname = cmd.args.drop(2).joinToString(" ")
-            
-            when (action) {
-                "add" -> {
-                    NicknamesManager.addNickname(service, realAgent, nickname)
-                    service.replyToSender(config, cmd, "Added nickname: $nickname -> $realAgent")
-                    return
+        when (val action = NicknameCommand.parse(cmd.args)) {
+            is NicknameCommand.Action.Add -> {
+                val stored = NicknamesManager.putNickname(
+                    service,
+                    action.nickname,
+                    action.agent,
+                    action.replace,
+                )
+                val reply = if (stored) {
+                    "Nickname saved: ${action.nickname} -> ${action.agent}"
+                } else {
+                    "Nickname '${action.nickname}' already exists. " +
+                        "Use /nicknames replace ${action.nickname} for ${action.agent}."
                 }
-                "remove", "rm" -> {
-                    NicknamesManager.removeNickname(service, nickname)
-                    service.replyToSender(config, cmd, "Removed nickname: $nickname")
-                    return
-                }
-                else -> {
-                    service.replyToSender(config, cmd, "usage: /nicknames <agent> add|rm <nickname>")
-                    return
-                }
+                service.replyToSender(config, cmd, reply)
             }
-        } else if (cmd.args.isNotEmpty()) {
-            service.replyToSender(config, cmd, "usage: /nicknames <agent> add|rm <nickname>")
-            return
+            is NicknameCommand.Action.Remove -> {
+                NicknamesManager.removeNickname(service, action.nickname)
+                service.replyToSender(config, cmd, "Nickname removed: ${action.nickname}")
+            }
+            is NicknameCommand.Action.ListFor -> listNicknames(service, config, cmd, action.agent)
+            is NicknameCommand.Action.SetEnabled -> {
+                NicknamesManager.setEnabled(service, action.enabled)
+                val state = if (action.enabled) "enabled" else "disabled"
+                service.replyToSender(config, cmd, "Nicknames are $state.")
+            }
+            NicknameCommand.Action.Status -> {
+                val state = if (NicknamesManager.isEnabled(service)) "enabled" else "disabled"
+                service.replyToSender(config, cmd, "Nicknames are $state.")
+            }
+            is NicknameCommand.Action.Invalid -> {
+                service.replyToSender(config, cmd, "${action.reason}\n${NicknameCommand.USAGE}")
+            }
         }
-        
-        val all = NicknamesManager.getAll(service)
-        val reply = if (all.isEmpty()) {
-            "No nicknames configured."
-        } else {
-            "Nicknames:\n" + all.entries.joinToString("\n") { "${it.key} -> ${it.value}" }
+    }
+
+    private fun listNicknames(
+        service: A8sService,
+        config: A8sAndroid.Config,
+        cmd: MqttRoute.Command,
+        agent: String?,
+    ) {
+        val all = NicknamesManager.getAll(service).toSortedMap()
+        val filtered = if (agent == null) all else all.filterValues { it == agent }
+        val reply = when {
+            filtered.isEmpty() && agent == null -> "No nicknames configured."
+            filtered.isEmpty() -> "No nicknames configured for $agent."
+            else -> "Nicknames:\n" + filtered.entries.joinToString("\n") { "${it.key} -> ${it.value}" }
         }
         service.replyToSender(config, cmd, reply)
     }

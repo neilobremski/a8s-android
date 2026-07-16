@@ -401,26 +401,29 @@ class CmdHelpersTest {
     @Test
     fun `parseTellArgs requires agent and message`() {
         val result = CmdHelpers.parseTellArgs(listOf("Bob", "hello", "world"))
-        assertEquals("Bob", result!!.agent)
+        assertEquals("Bob", result!!.rawAgent)
+        assertEquals("bob", result.agent)
         assertEquals("hello world", result.message)
     }
 
     @Test
     fun `parseTellArgs strips trailing punctuation from agent`() {
         val result = CmdHelpers.parseTellArgs(listOf("alice,", "hello"))
-        assertEquals("alice", result!!.agent)
+        assertEquals("alice", result!!.rawAgent)
+        assertEquals("alice", result.agent)
         assertEquals("hello", result.message)
 
         val result2 = CmdHelpers.parseTellArgs(listOf("Bob:", "how", "are", "you?"))
-        assertEquals("Bob", result2!!.agent)
+        assertEquals("Bob", result2!!.rawAgent)
+        assertEquals("bob", result2.agent)
         assertEquals("how are you?", result2.message)
     }
 
     @Test
-    fun `parseTellArgs invokes resolver after stripping punctuation`() {
-        val resolver: (String) -> String = { if (it == "alice") "operator" else it }
-        val result = CmdHelpers.parseTellArgs(listOf("alice,", "hello"), resolver)
-        assertEquals("operator", result!!.agent)
+    fun `parseTellArgs normalizes mixed case agent`() {
+        val result = CmdHelpers.parseTellArgs(listOf("Alice-Agent", "hello"))
+        assertEquals("Alice-Agent", result!!.rawAgent)
+        assertEquals("alice-agent", result.agent)
         assertEquals("hello", result.message)
     }
 

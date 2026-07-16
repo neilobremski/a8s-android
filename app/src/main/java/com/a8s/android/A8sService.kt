@@ -296,7 +296,7 @@ class A8sService : LifecycleService() {
                     }
                     updateNotification(connectionStatusSummary())
                     retryQueue.flushOnReconnect(name) { topic, payload ->
-                        tryPublish(client, topic, payload)
+                        tryPublish(client, name, topic, payload)
                     }
                 }
                 override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
@@ -348,7 +348,24 @@ class A8sService : LifecycleService() {
         // the reply lands whenever the handler finishes.
         val async = AsyncCommands.handlers[cmd.name]
         if (async != null) {
-            Thread { async(this, config, cmd) }.start()
+            Thread {
+                try {
+                    async(this, config, cmd)
+                } catch (e: Exception) {
+                    val reason = "${e.javaClass.simpleName}: ${e.message ?: "no message"}"
+                    A8sAndroid.log("/${cmd.name} async handler failed: $reason")
+                    TransactionTrace.record(
+                        TransactionTrace.Event(
+                            txnId = cmd.envelopeId,
+                            flow = "CMD_FAIL",
+                            status = TransactionTrace.Status.FAIL,
+                            from = cmd.sender,
+                            summary = "/${cmd.name} handler threw $reason",
+                        ),
+                    )
+                    replyToSender(config, cmd, "/${cmd.name} failed; check /logs or /trace")
+                }
+            }.start()
             return
         }
         val reply = when (cmd.name) {
@@ -375,17 +392,23 @@ class A8sService : LifecycleService() {
         to: String,
         content: String,
         files: org.json.JSONArray = org.json.JSONArray(),
-    ): Pair<Int, Int> {
-        val config = A8sAndroid.config ?: return 0 to 0
+    ): EnvelopePublishResult {
+        val config = A8sAndroid.config ?: return EnvelopePublishResult("", 0, 0)
+        val envelopeId = Ulid.new()
         val payload = JSONObject().apply {
-            put("id", Ulid.new())
+            put("id", envelopeId)
             put("date", EnvelopeTime.isoNowUtc())
             put("from", from)
             put("to", to)
             put("content", content)
             put("files", files)
         }.toString()
-        return publishToAllRemotes(config, payload)
+        A8sAndroid.log(
+            "MQTT publish prepared id=${envelopeId.take(8)} from=$from to=$to " +
+                "(${content.length} chars, ${config.remotes.size} remote(s))",
+        )
+        val (accepted, failed) = publishToAllRemotes(config, payload)
+        return EnvelopePublishResult(envelopeId, accepted, failed)
     }
 
     internal fun buildFilesArrayForSms(
@@ -547,11 +570,20 @@ class A8sService : LifecycleService() {
         return arr
     }
 
-    private fun tryPublish(client: MqttAsyncClient, topic: String, payload: ByteArray): Boolean {
+    private fun tryPublish(
+        client: MqttAsyncClient,
+        remoteName: String,
+        topic: String,
+        payload: ByteArray,
+    ): Boolean {
+        val meta = MqttPublishDiagnostics.metadata(payload)
         return try {
-            client.publish(topic, MqttMessage(payload))
+            val message = MqttMessage(payload).apply { qos = 1 }
+            client.publish(topic, message, null, MqttPublishDiagnostics.listener(remoteName, meta))
+            MqttPublishDiagnostics.accepted(remoteName, topic, meta)
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            MqttPublishDiagnostics.rejected(remoteName, meta, e)
             false
         }
     }
@@ -562,7 +594,7 @@ class A8sService : LifecycleService() {
             if (rc.topic != topic) continue
             val client = mqttClients[name] ?: continue
             if (!client.isConnected) continue
-            if (tryPublish(client, rc.topic, payload)) return true
+            if (tryPublish(client, name, rc.topic, payload)) return true
         }
         return false
     }
@@ -579,7 +611,7 @@ class A8sService : LifecycleService() {
                 fail++
                 return@forEach
             }
-            if (tryPublish(client, rc.topic, bytes)) {
+            if (tryPublish(client, name, rc.topic, bytes)) {
                 ok++
             } else {
                 A8sAndroid.log("MQTT[$name] publish failed, queuing for retry")
