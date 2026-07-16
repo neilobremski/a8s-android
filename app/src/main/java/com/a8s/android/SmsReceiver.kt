@@ -10,24 +10,26 @@ class SmsReceiver : BroadcastReceiver() {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
-        for (msg in messages) {
-            val from = msg.displayOriginatingAddress ?: continue
-            val body = msg.displayMessageBody ?: ""
+        val first = messages.firstOrNull() ?: return
+        val from = first.displayOriginatingAddress ?: return
+        val body = messages.joinToString("") { it.displayMessageBody.orEmpty() }
+        val eventTimeMs = messages.minOf { it.timestampMillis }
 
-            val brief = body.replace("\n", " ").trim().let {
-                if (it.length > 200) it.take(200) + "…" else it
-            }
-            A8sAndroid.log("Received SMS from $from: $brief")
-            A8sService.instance?.publishIncoming(
-                IncomingSmsRouter.IncomingMessage(
-                    fromIdentity = from,
-                    body = body,
-                    ingress = IncomingSmsRouter.IngressMeta(
-                        eventTimeMs = msg.timestampMillis,
-                        maxAgeMs = IngressStaleness.SMS_MAX_AGE_MS,
-                    ),
-                ),
-            )
+        val brief = body.replace("\n", " ").trim().let {
+            if (it.length > 200) it.take(200) + "…" else it
         }
+        A8sAndroid.log("Received SMS from $from: $brief")
+        A8sService.instance?.publishIncoming(
+            IncomingSmsRouter.IncomingMessage(
+                fromIdentity = from,
+                body = body,
+                ingress = IncomingSmsRouter.IngressMeta(
+                    source = IngressSource.SMS,
+                    sourceEventId = "$from|$eventTimeMs|${hashIngressIdentity(body)}",
+                    eventTimeMs = eventTimeMs,
+                    maxAgeMs = IngressStaleness.SMS_MAX_AGE_MS,
+                ),
+            ),
+        )
     }
 }

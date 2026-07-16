@@ -53,6 +53,8 @@ class SmsNotificationListener : NotificationListenerService() {
                         mediaFiles = files,
                         replyAction = replyAction,
                         ingress = IncomingSmsRouter.IngressMeta(
+                            source = IngressSource.NOTIFICATION,
+                            sourceEventId = "${sbn.key}|$eventTimeMs",
                             eventTimeMs = eventTimeMs,
                             maxAgeMs = IngressStaleness.NOTIFICATION_MAX_AGE_MS,
                         ),
@@ -66,6 +68,8 @@ class SmsNotificationListener : NotificationListenerService() {
                         body = text,
                         replyAction = replyAction,
                         ingress = IncomingSmsRouter.IngressMeta(
+                            source = IngressSource.NOTIFICATION,
+                            sourceEventId = "${sbn.key}|$eventTimeMs",
                             eventTimeMs = eventTimeMs,
                             maxAgeMs = IngressStaleness.NOTIFICATION_MAX_AGE_MS,
                         ),

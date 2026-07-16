@@ -36,6 +36,22 @@ class ConfigParserTest {
     }
 
     @Test
+    fun `parse rejects negative sms throttle`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "sms_throttle_s": -1
+            }
+            """.trimIndent(),
+        )
+        assertThrows(IllegalArgumentException::class.java) { ConfigParser.parse(json) }
+    }
+
+    @Test
     fun `parse respects sms_truncate_limit setting`() {
         val json = JSONObject(
             """

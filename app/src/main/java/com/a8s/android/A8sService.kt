@@ -30,6 +30,9 @@ import org.eclipse.paho.client.mqttv3.*
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLSocketFactory
 
 class A8sService : LifecycleService() {
@@ -40,12 +43,17 @@ class A8sService : LifecycleService() {
         const val SMS_SENT_ACTION = "com.a8s.android.SMS_SENT"
         private const val UPDATE_CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
         private const val UPDATE_CHECK_INITIAL_DELAY_MS = 60L * 1000
+        private const val SMS_QUEUE_CAPACITY = 100
+        private const val SMS_RESULT_TIMEOUT_MS = 30_000L
+        private const val DEFAULT_SMS_THROTTLE_MS = 10_000L
+        private const val LARGE_SMS_PREVIEW_CHARS = 120
 
         var instance: A8sService? = null
             private set
     }
 
     private val smsRequestSeq = java.util.concurrent.atomic.AtomicInteger(0)
+    private val smsResults = ConcurrentHashMap<Int, ArrayBlockingQueue<Int>>()
     private var sentResultReceiver: BroadcastReceiver? = null
 
     // One paho client per configured remote, keyed by remote name. The
@@ -57,14 +65,14 @@ class A8sService : LifecycleService() {
     private lateinit var wakeLock: PowerManager.WakeLock
     private lateinit var wifiLock: WifiManager.WifiLock
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    internal val publishDedup: PublishDedup by lazy {
-        PublishDedup(store = FileDedupStore(File(filesDir, "inbound_publish_dedup.json")))
+    internal val ingressCoordinator: IngressCoordinator<IncomingSmsRouter.PreparedIncoming> by lazy {
+        IngressCoordinator(
+            store = FileDedupStore(File(filesDir, "inbound_ingress_events.json")),
+            merge = IncomingSmsRouter::mergePrepared,
+        )
     }
     internal val inboundCommandDedup: CommandDedup by lazy {
         CommandDedup(store = FileDedupStore(File(filesDir, "dedup_inbound_cmd.json")))
-    }
-    internal val smsOriginCommandDedup: CommandDedup by lazy {
-        CommandDedup(store = FileDedupStore(File(filesDir, "dedup_sms_origin.json")))
     }
     internal val phoneAgentForwardDedup: CommandDedup by lazy {
         CommandDedup(store = FileDedupStore(File(filesDir, "dedup_phone_fwd.json")))
@@ -86,13 +94,16 @@ class A8sService : LifecycleService() {
     internal var projectionData: Intent? = null
         private set
 
-    private val outboundSmsQueue = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, String>>()
+    private data class OutboundSms(val id: Int, val to: String, val body: String)
+    private val outboundSmsQueue = ArrayBlockingQueue<OutboundSms>(SMS_QUEUE_CAPACITY)
     private var smsSenderThread: Thread? = null
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         serviceStartMs = System.currentTimeMillis()
+        File(filesDir, "inbound_publish_dedup.json").delete()
+        File(filesDir, "dedup_sms_origin.json").delete()
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification("Starting..."))
 
@@ -124,24 +135,8 @@ class A8sService : LifecycleService() {
     private fun startSmsSenderThread() {
         smsSenderThread = Thread {
             while (!Thread.interrupted()) {
-                val pair = outboundSmsQueue.poll()
-                if (pair != null) {
-                    val (to, body) = pair
-                    executeSendSms(to, body)
-                    val config = A8sAndroid.config
-                    val throttleMs = config?.smsThrottleMs ?: 10000L
-                    try {
-                        Thread.sleep(throttleMs)
-                    } catch (e: InterruptedException) {
-                        break
-                    }
-                } else {
-                    try {
-                        Thread.sleep(100)
-                    } catch (e: InterruptedException) {
-                        break
-                    }
-                }
+                val sms = try { outboundSmsQueue.take() } catch (_: InterruptedException) { break }
+                executeSendSms(sms)
             }
         }
         smsSenderThread?.start()
@@ -184,6 +179,7 @@ class A8sService : LifecycleService() {
                 val recipient = intent?.getStringExtra("recipient") ?: "?"
                 val part = intent?.getIntExtra("part", -1) ?: -1
                 val of = intent?.getIntExtra("of", -1) ?: -1
+                val requestId = intent?.getIntExtra("request_id", -1) ?: -1
                 val verdict = when (rc) {
                     android.app.Activity.RESULT_OK -> "OK"
                     android.telephony.SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "GENERIC_FAILURE"
@@ -193,6 +189,7 @@ class A8sService : LifecycleService() {
                     else -> "rc=$rc"
                 }
                 A8sAndroid.log("SMS send result $verdict to $recipient (part ${part + 1}/$of)")
+                smsResults.remove(requestId)?.offer(rc)
             }
         }
         val filter = IntentFilter(SMS_SENT_ACTION)
@@ -378,7 +375,7 @@ class A8sService : LifecycleService() {
             "logs" -> Commands.renderLogs(A8sAndroid.getLogs(), Commands.parseLogsArgs(cmd.args))
             "trace" -> TransactionTrace.render(Commands.parseTraceArgs(cmd.args))
             "flushdedup" -> {
-                publishDedup.clear()
+                ingressCoordinator.clear()
                 "Deduplication cache flushed."
             }
             else -> Commands.renderUnknown(cmd.name)
@@ -440,12 +437,9 @@ class A8sService : LifecycleService() {
         if (!smsReplyTo.isNullOrBlank()) {
             Thread {
                 val smsBody = SmsCommandDelivery.smsBodyWithUploads(this, config, body, files)
-                val chunks = CmdHelpers.chunkForSms(smsBody, config)
-                for (chunk in chunks) {
-                    sendSms(smsReplyTo, chunk)
-                }
+                sendSms(smsReplyTo, smsBody)
                 A8sAndroid.log(
-                    "CMD -> SMS $smsReplyTo (${smsBody.length} chars, ${files.size} file(s), ${chunks.size} part(s))",
+                    "CMD -> SMS $smsReplyTo (${smsBody.length} chars, ${files.size} file(s), one logical message)",
                 )
             }.start()
             return
@@ -623,11 +617,15 @@ class A8sService : LifecycleService() {
     }
 
     internal fun sendSms(to: String, body: String) {
-        outboundSmsQueue.add(Pair(to, body))
-        A8sAndroid.log("SMS queued for $to: ${preview(body)}")
+        val sms = OutboundSms(smsRequestSeq.incrementAndGet(), to, body)
+        if (outboundSmsQueue.offer(sms)) {
+            A8sAndroid.log("SMS logical message ${sms.id} queued for $to (depth ${outboundSmsQueue.size}/$SMS_QUEUE_CAPACITY)")
+        } else {
+            A8sAndroid.log("SMS queue full; rejected logical message ${sms.id} to $to")
+        }
     }
 
-    private fun executeSendSms(to: String, body: String) {
+    private fun executeSendSms(sms: OutboundSms) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS)
             != PackageManager.PERMISSION_GRANTED) {
             A8sAndroid.log("SMS Send blocked: SEND_SMS not granted — open the app and grant permissions")
@@ -640,36 +638,100 @@ class A8sService : LifecycleService() {
                 @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
-            // sentIntent fires once per part (the system splits long
-            // messages); we use a single-part PendingIntent and
-            // sendMultipartTextMessage so the result reaches us for
-            // every chunk.
-            val parts = smsManager.divideMessage(body)
-            recordOutboundSmsParts(to, parts)
-            val sentIntents = ArrayList<PendingIntent>(parts.size)
-            for (i in parts.indices) {
+            val deliveryBody = prepareSmsDeliveryBody(sms)
+            val segments = SmsSegmenter.split(deliveryBody) { smsManager.divideMessage(it).size == 1 }
+            recordOutboundSmsParts(sms.to, segments)
+            segments.forEachIndexed { i, segment ->
+                val requestId = smsRequestSeq.incrementAndGet()
                 val intent = Intent(SMS_SENT_ACTION).apply {
                     setPackage(packageName)
-                    putExtra("recipient", to)
+                    putExtra("recipient", sms.to)
                     putExtra("part", i)
-                    putExtra("of", parts.size)
+                    putExtra("of", segments.size)
+                    putExtra("request_id", requestId)
                 }
-                sentIntents.add(
-                    PendingIntent.getBroadcast(
-                        this, smsRequestSeq.incrementAndGet(), intent,
-                        PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
-                    )
+                val result = ArrayBlockingQueue<Int>(1)
+                smsResults[requestId] = result
+                val sentIntent = PendingIntent.getBroadcast(
+                    this, requestId, intent,
+                    PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
                 )
+                smsManager.sendTextMessage(sms.to, null, segment, sentIntent, null)
+                val rc = result.poll(SMS_RESULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                smsResults.remove(requestId)
+                if (rc == null) {
+                    A8sAndroid.log("SMS logical message ${sms.id} halted after callback timeout")
+                    return
+                }
+                if (rc != android.app.Activity.RESULT_OK) {
+                    A8sAndroid.log("SMS logical message ${sms.id} halted after failed segment ${i + 1}/${segments.size}")
+                    return
+                }
+                if (i < segments.lastIndex) Thread.sleep(A8sAndroid.config?.smsThrottleMs ?: DEFAULT_SMS_THROTTLE_MS)
             }
-            smsManager.sendMultipartTextMessage(to, null, parts, sentIntents, null)
-            A8sAndroid.log("SMS sent to $to: ${preview(body)}")
+            A8sAndroid.log("SMS logical message ${sms.id} submitted to ${sms.to} (${segments.size} carrier segment(s))")
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
         } catch (e: Exception) {
             A8sAndroid.log("SMS Send Failed: " + e.message)
         }
     }
 
+    private fun prepareSmsDeliveryBody(sms: OutboundSms): String {
+        val config = A8sAndroid.config ?: return sms.body
+        if (sms.body.length <= config.smsTruncateLimit || config.services.isEmpty()) return sms.body
+        val file = File(cacheDir, "sms-output-${sms.id}.txt")
+        return try {
+            file.writeText(sms.body)
+            val files = buildFilesArray(config, listOf(file))
+            val urls = files.optJSONObject(0)?.optJSONArray("storage")
+            val url = urls?.optString(0).orEmpty()
+            if (url.isBlank()) {
+                A8sAndroid.log("SMS logical message ${sms.id}: large-output upload failed; using paced segments")
+                sms.body
+            } else {
+                A8sAndroid.log("SMS logical message ${sms.id}: large output replaced by preview + uploaded text")
+                sms.body.take(LARGE_SMS_PREVIEW_CHARS).trimEnd() + "…\nFull message: $url"
+            }
+        } catch (e: Exception) {
+            A8sAndroid.log("SMS logical message ${sms.id}: large-output fallback failed (${e.message})")
+            sms.body
+        } finally {
+            file.delete()
+        }
+    }
+
     fun publishIncoming(message: IncomingSmsRouter.IncomingMessage) {
         IncomingSmsRouter.publishIncoming(this, message)
+    }
+
+    internal fun submitPreparedIngress(prepared: IncomingSmsRouter.PreparedIncoming) {
+        val candidate = IngressCandidate(
+            source = prepared.message.ingress.source,
+            sourceEventId = prepared.message.ingress.sourceEventId,
+            eventTimeMs = prepared.message.ingress.eventTimeMs,
+            principal = prepared.agent,
+            body = prepared.message.body,
+            richness = prepared.message.mediaFiles.size * 2 + if (prepared.message.replyAction != null) 1 else 0,
+            value = prepared,
+        )
+        when (ingressCoordinator.accept(candidate)) {
+            IngressDecision.Accepted -> A8sAndroid.log("Ingress accepted from ${candidate.source}")
+            IngressDecision.Coalesced -> A8sAndroid.log("Ingress coalesced across sources for ${candidate.principal}")
+            IngressDecision.DuplicateSourceEvent -> {
+                A8sAndroid.log("Ingress duplicate source event ignored (${candidate.source})")
+                prepared.message.mediaFiles.forEach { it.delete() }
+                return
+            }
+        }
+        handler.postDelayed({ flushPreparedIngress() }, IngressCoordinator.DEFAULT_DEBOUNCE_MS)
+    }
+
+    private fun flushPreparedIngress() {
+        ingressCoordinator.drainReady().forEach { ready ->
+            IncomingSmsRouter.processPrepared(this, ready.candidate.value)
+            ingressCoordinator.complete(ready)
+        }
     }
 
     private fun registerNetworkCallback() {

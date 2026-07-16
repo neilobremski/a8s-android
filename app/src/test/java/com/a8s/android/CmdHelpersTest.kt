@@ -433,39 +433,4 @@ class CmdHelpersTest {
         assertNull(CmdHelpers.parseTellArgs(emptyList()))
     }
 
-    // ── SMS reply chunk ───────────────────────────────────────────────────
-
-    @Test
-    fun `chunkForSms passes through short text`() {
-        val chunks = CmdHelpers.chunkForSms("hello")
-        assertEquals(1, chunks.size)
-        assertEquals("hello", chunks[0])
-    }
-
-    @Test
-    fun `chunkForSms splits long text with prefix and stays within budget`() {
-        val config = A8sAndroid.Config(
-            device = "test",
-            registry = PrincipalRegistry("test", emptyMap(), emptyList()),
-            remotes = emptyMap(),
-            services = emptyList(),
-            smsThrottleMs = 10000,
-            smsTruncateLimit = 100
-        )
-        val long = "x".repeat(250)
-        val chunks = CmdHelpers.chunkForSms(long, config)
-        
-        // 100 limit - 20 prefix reserve = 80 char chunks
-        // 250 / 80 = 4 chunks (80, 80, 80, 10)
-        assertEquals(4, chunks.size)
-        
-        for (i in 0 until 4) {
-            assertTrue(chunks[i].length <= 100)
-            assertTrue(chunks[i].startsWith("part ${i+1} of 4: "))
-        }
-        
-        val reassembled = chunks.joinToString("") { it.substringAfter(": ") }
-        assertEquals(long, reassembled)
-    }
-
 }

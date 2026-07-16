@@ -22,7 +22,11 @@ class CommandDedup(
 
     init {
         if (persistEnabled) {
-            store?.load()?.let { seenPayloads.putAll(it) }
+            store?.load()?.forEach { (key, timestamp) ->
+                val safeKey = if (HASH.matches(key)) key else hashIngressIdentity(key)
+                seenPayloads[safeKey] = timestamp
+            }
+            store?.save(seenPayloads)
         }
     }
 
@@ -42,7 +46,8 @@ class CommandDedup(
         val id = envelopeId?.trim().orEmpty()
         if (id.isNotEmpty() && id in seenIds) return false
 
-        val key = payloadKey?.trim().orEmpty()
+        val rawKey = payloadKey?.trim().orEmpty()
+        val key = rawKey.takeIf { it.isNotEmpty() }?.let(::hashIngressIdentity).orEmpty()
         if (key.isNotEmpty() && key in seenPayloads) return false
 
         if (id.isNotEmpty()) {
@@ -57,6 +62,13 @@ class CommandDedup(
             }
         }
         return true
+    }
+
+    @Synchronized
+    fun clear() {
+        seenIds.clear()
+        seenPayloads.clear()
+        store?.save(emptyMap())
     }
 
     private fun evictExpired(map: MutableMap<String, Long>, now: Long) {
@@ -84,28 +96,13 @@ class CommandDedup(
         const val DEFAULT_WINDOW_MS: Long = 5L * 60L * 1000L
         const val DEFAULT_MAX_ENTRIES: Int = 200
         private val SMS_COMMANDS = setOf("send", "reply", "mms")
+        private val HASH = Regex("[0-9a-f]{64}")
     }
 }
 
 /** Process-wide dedup gate for inbound SMS-style slash commands. */
 fun gateInboundSmsCommand(service: A8sService, cmd: MqttRoute.Command): Boolean =
     service.inboundCommandDedup.gateSmsCommand(cmd)
-
-/**
- * Dedup for commands that originate over SMS/RCS. A single inbound
- * message can surface both via [SmsReceiver] and via the Google Messages
- * notification (which also re-posts on thread updates), so every verb —
- * not just the SMS-sending ones — needs a gate before it executes.
- *
- * Keyed on the matched phonebook participant (not the raw number) so the
- * two delivery paths — which can present the sender as `+1…` digits vs a
- * Contacts-resolved number — collapse to the same key.
- */
-fun gateSmsOriginCommand(service: A8sService, participant: String, body: String): Boolean =
-    service.smsOriginCommandDedup.shouldExecute(
-        envelopeId = null,
-        payloadKey = "smsorigin|$participant|${body.trim()}",
-    )
 
 /**
  * Dedup for inbound phone-agent envelopes forwarded to SMS. Stops broker

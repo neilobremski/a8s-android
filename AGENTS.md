@@ -88,7 +88,7 @@ the PR will fail.
 | File | Role |
 |---|---|
 | `A8sAndroid.kt` | `Application` subclass. Owns the static `Config` (parsed from JSON), the in-app log ring (50 lines, surfaced to the UI via `onLogListener`), and `loadConfig`/`saveUri`/`getSavedUri` for SAF persistence. Triggers `requestBatteryOptimizationExclusion` on first launch. |
-| `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds one Paho v3 client per configured remote, wake/wifi locks, `PublishDedup`, `PublishRetryQueue`, the SMS-sent broadcast receiver, and the `MmsObserver`. Routes inbound MQTT via `decideRoute` and dispatches commands via the `asyncCommands` map. Manages auto-update checks (6-hour interval, GitHub Releases API). |
+| `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds one Paho v3 client per configured remote, wake/wifi locks, ingress coordinator, bounded carrier-paced SMS queue, `PublishRetryQueue`, the SMS-sent broadcast receiver, and the `MmsObserver`. Routes inbound MQTT via `decideRoute` and dispatches commands via the `asyncCommands` map. Manages auto-update checks (6-hour interval, GitHub Releases API). |
 | `MainActivity.kt` | Tabbed UI (Dashboard / Logs / Setup). The Dashboard tab is a full-screen `WebView` driven by `Dashboard.kt` state. The Logs tab shows the live log ring. The Setup tab has permission grants, configuration loading, and the status panel. Requests dangerous perms via `RequestMultiplePermissions`. |
 | `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent`. Forwards to `A8sService.publishIncoming`. |
 | `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Extracts media via `MediaExtractor` (on a worker thread) and caches the notification's reply action for `/reply`. Forwards to `A8sService.publishIncoming` with optional file attachments. |
@@ -100,11 +100,12 @@ the PR will fail.
 | `SmsSlashCommand.kt` | Classify inbound SMS bodies as authorized/forbidden/not-a-command using role policy. |
 | `SmsCommandDelivery.kt` | Phone-agent SMS forward + SMS reply body building (inline storage URLs). |
 | `CmdTell.kt` | `/tell <agent> <message>` — MQTT publish with phone principal as `from`. |
-| `NicknameCommand.kt` | Pure parser for `/nicknames add <nickname> for <agent>` and related list/remove/enable/disable/status actions. Normalizes names to lowercase, requires the literal `for`, rejects multiword/reserved nicknames, and makes replacement explicit. |
+| `NicknameCommand.kt` | Pure parser for `/nicknames add <nickname words> for <agent>` and related list/remove/enable/disable/status actions. Normalizes case, whitespace, and surrounding punctuation; requires the literal `for`; rejects reserved nicknames; and makes replacement explicit. |
 | `CmdNicknames.kt` / `NicknamesManager.kt` | Nickname command handler + SharedPreferences store. Mapping and enabled-state preferences are separate; direct `/tell` targets and resolved destinations normalize to lowercase. Known canonical device/principal names cannot be registered or overridden by nickname mappings. |
 | `Commands.kt` | Pure formatters for slash-command output. Consumes `InfoSnapshotter.InfoSnapshot` and renders via `renderInfo` / `renderLogs`. Keeps Android-specific gathering out of the formatter so it tests without a Context. |
 | `InfoSnapshotter.kt` | Android-side gatherer for `/info`. `capture(context, config, verbose)` builds `InfoSnapshot` (~150 fields in verbose mode). Field catalogue in `INFO_FIELD_RESEARCH.md`. |
-| `PublishDedup.kt` | Bounded dedup for inbound SMS/RCS → MQTT: 5-minute in-memory window plus up to 2,000 persisted `from|to|body` keys in `inbound_publish_dedup.json`. Persisted keys currently have no practical time expiry. Stops Google Messages notification re-posts and process-restart replays. |
+| `IngressCoordinator.kt` | Source-event ingress dedup/coalescing before command execution or MQTT publish. Holds observations 2.5s, merges equivalent SMS/MMS/notification events, preserves richer media/reply metadata, and persists bounded SHA-256 event identities for 48h without message plaintext. |
+| `SmsSegmenter.kt` | Splits logical SMS output into individually sendable carrier units using `SmsManager.divideMessage` as the encoding oracle. Preserves Unicode boundaries, prefers word boundaries, and adds `[N/M]` prefixes. The service sends one unit at a time after callback/timeout through a bounded queue. |
 | `IngressStaleness.kt` | Drops ingress events older than 6h (RCS notification message time) or 48h (SMS/MMS PDU date). |
 | `NotificationIngress.kt` | Reads MessagingStyle message timestamps for RCS staleness (preferred over notification post time). |
 | `OutboundSmsEcho.kt` | Drops inbound SMS/RCS whose body matches a recent outbound multipart segment (prevents command-reply echoes publishing to `sms_inbound_agent`). |
@@ -457,10 +458,10 @@ fun route(payload: String): MqttRoute = throw IllegalStateException("bad")
   exists: `MqttRouteTest::content field is read instead of body`.
 - **Don't publish with `to: "all"`.** The host won't resolve it unless
   an alias literally named `all` exists. Address a specific participant.
-- **Don't bypass `PublishDedup`.** Google Messages re-posts
-  notifications on thread updates; without dedup the cluster sees N
-  copies of the same message. Persistence + ingress staleness guard
-  the week-later Messages-app replay case.
+- **Don't bypass `IngressCoordinator`.** Every SMS, MMS, and Google
+  Messages observation must carry a stable source event ID and pass through
+  the coordinator before command execution or MQTT publication. Body-based
+  dedup suppresses legitimate repeated replies such as `yes`.
 - **Don't bypass `CommandDedup` for outbound SMS verbs.** `/send`,
   `/reply`, and `/mms` must pass through `CommandDispatch` /
   `gateInboundSmsCommand` before queuing SMS — upstream MQTT retries with

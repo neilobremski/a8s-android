@@ -48,11 +48,7 @@ object SmsCommandDelivery {
         val allEnvelopeFiles = forward.files
         val fileDetail = summarizeForwardFiles(allEnvelopeFiles)
         val finalBody = CmdHelpers.buildSendBody(attributed, allEnvelopeFiles)
-        val chunks = CmdHelpers.chunkForSms(finalBody, A8sAndroid.config)
-        
-        for (chunk in chunks) {
-            service.sendSms(forward.smsToNumber, chunk)
-        }
+        service.sendSms(forward.smsToNumber, finalBody)
 
         if (allEnvelopeFiles.isEmpty()) {
             TransactionTrace.record(
@@ -63,7 +59,7 @@ object SmsCommandDelivery {
                     from = forward.from,
                     to = maskedTo,
                     summary = "text: ${service.preview(forward.content)}",
-                    detail = "files: none\nsms: sent in ${chunks.size} part(s)",
+                    detail = "files: none\nsms: queued as one logical message",
                 ),
             )
             return
@@ -76,10 +72,10 @@ object SmsCommandDelivery {
             else -> TransactionTrace.Status.FAIL
         }
         val smsNote = when {
-            withUrls == 0 -> "sms: sent in ${chunks.size} part(s) — no storage url(s) in envelope"
+            withUrls == 0 -> "sms: queued as one logical message — no storage url(s) in envelope"
             withUrls < allEnvelopeFiles.size -> 
-                "sms: sent in ${chunks.size} part(s) with inline URL(s) for $withUrls/${allEnvelopeFiles.size} file(s)"
-            else -> "sms: sent in ${chunks.size} part(s) with inline URL(s) for all file(s)"
+                "sms: queued with inline URL(s) for $withUrls/${allEnvelopeFiles.size} file(s)"
+            else -> "sms: queued with inline URL(s) for all file(s)"
         }
         TransactionTrace.record(
             TransactionTrace.Event(
