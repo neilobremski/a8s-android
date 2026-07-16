@@ -67,12 +67,13 @@ class CmdHelpersTest {
     }
 
     @Test
-    fun `buildSendBody caps at SMS length limit`() {
+    fun `buildSendBody appends all URLs without length limit`() {
         val longUrl = "https://tempfile.org/" + "x".repeat(100) + "/"
         val files = (1..20).map { EnvelopeFile("f$it.png", listOf(longUrl)) }
         val result = CmdHelpers.buildSendBody("hello", files)
-        assertTrue(result.length <= 1520)
-        assertTrue(result.contains("[+"))
+        // 5 chars for "hello" + 20 * (1 + 122) chars for URLs = ~2465 chars
+        assertTrue(result.length > 2000)
+        assertFalse(result.contains("[+"))
     }
 
     // ── /photo ────────────────────────────────────────────────────────────
@@ -429,19 +430,39 @@ class CmdHelpersTest {
         assertNull(CmdHelpers.parseTellArgs(emptyList()))
     }
 
-    // ── SMS reply cap ─────────────────────────────────────────────────────
+    // ── SMS reply chunk ───────────────────────────────────────────────────
 
     @Test
-    fun `capForSms passes through short text`() {
-        assertEquals("hello", CmdHelpers.capForSms("hello"))
+    fun `chunkForSms passes through short text`() {
+        val chunks = CmdHelpers.chunkForSms("hello")
+        assertEquals(1, chunks.size)
+        assertEquals("hello", chunks[0])
     }
 
     @Test
-    fun `capForSms truncates long text with marker and stays within budget`() {
-        val long = "x".repeat(5000)
-        val capped = CmdHelpers.capForSms(long)
-        assertTrue(capped.length <= 800)
-        assertTrue(capped.endsWith("… [truncated]"))
+    fun `chunkForSms splits long text with prefix and stays within budget`() {
+        val config = A8sAndroid.Config(
+            device = "test",
+            registry = PrincipalRegistry("test", emptyMap(), emptyList()),
+            remotes = emptyMap(),
+            services = emptyList(),
+            smsThrottleMs = 10000,
+            smsTruncateLimit = 100
+        )
+        val long = "x".repeat(250)
+        val chunks = CmdHelpers.chunkForSms(long, config)
+        
+        // 100 limit - 20 prefix reserve = 80 char chunks
+        // 250 / 80 = 4 chunks (80, 80, 80, 10)
+        assertEquals(4, chunks.size)
+        
+        for (i in 0 until 4) {
+            assertTrue(chunks[i].length <= 100)
+            assertTrue(chunks[i].startsWith("part ${i+1} of 4: "))
+        }
+        
+        val reassembled = chunks.joinToString("") { it.substringAfter(": ") }
+        assertEquals(long, reassembled)
     }
 
 }
