@@ -172,9 +172,7 @@ object ConfigParser {
             rejectUnknownKeys(settings, SETTINGS_ALLOWED)
             if (settings.has("sms_truncate_limit")) {
                 smsChunkLimit = settings.getInt("sms_truncate_limit")
-                require(smsChunkLimit >= SmsSegmenter.MIN_CHUNK_CHARS) {
-                    "sms_truncate_limit must be at least ${SmsSegmenter.MIN_CHUNK_CHARS}"
-                }
+                    .coerceAtLeast(SmsSegmenter.MIN_CHUNK_CHARS)
             }
         }
 

@@ -88,9 +88,9 @@ The app is configured via a JSON file with the following schema:
   Per-service options: `expiry_hours` (1, 6, 24, 48; default 24) and
   `timeout_s` (default 30).
 - **`sms_throttle_s`** — non-negative delay between long-message chunks.
-  Each chunk waits for every Android sent callback (or a 30-second timeout)
-  before the next chunk is submitted. The logical-message queue holds at
-  most 100 entries.
+  Each chunk waits for every Android sent callback before the next chunk is
+  submitted; each internal carrier part has a 30-second callback timeout.
+  The logical-message queue holds at most 100 entries.
 - **`settings.sms_truncate_limit`** — logical SMS chunk size in characters
   (default 1000, minimum 100). Longer output is split at word boundaries
   without breaking URLs, and each chunk is labeled

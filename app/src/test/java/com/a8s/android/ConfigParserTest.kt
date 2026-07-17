@@ -73,7 +73,7 @@ class ConfigParserTest {
     }
 
     @Test
-    fun `parse rejects SMS chunk limit below minimum`() {
+    fun `parse clamps stored SMS chunk limit to minimum`() {
         val json = JSONObject(
             """
             {
@@ -86,7 +86,7 @@ class ConfigParserTest {
             """.trimIndent(),
         )
 
-        assertThrows(IllegalArgumentException::class.java) { ConfigParser.parse(json) }
+        assertEquals(SmsSegmenter.MIN_CHUNK_CHARS, ConfigParser.parse(json).smsChunkLimit)
     }
 
     @Test

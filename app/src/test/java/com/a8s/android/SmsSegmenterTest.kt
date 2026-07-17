@@ -11,6 +11,14 @@ class SmsSegmenterTest {
     }
 
     @Test
+    fun `multiple carrier parts below chunk limit remain one logical message`() {
+        val body = "word ".repeat(80)
+
+        assertTrue(body.length > 160)
+        assertEquals(listOf(body), SmsSegmenter.split(body, 1000, 123))
+    }
+
+    @Test
     fun `long text has readable message and part headers`() {
         val result = SmsSegmenter.split("word ".repeat(100), 120, 123)
 
@@ -57,5 +65,16 @@ class SmsSegmenterTest {
         val url = "https://example.test/" + "path".repeat(40)
 
         assertEquals(listOf(url), SmsSegmenter.split(url, 100, 9))
+    }
+
+    @Test
+    fun `part totals crossing ten reserve the wider prefix`() {
+        val result = SmsSegmenter.split("word ".repeat(220), 100, 321)
+
+        assertTrue(result.size >= 10)
+        result.forEachIndexed { index, part ->
+            assertTrue(part.startsWith("Message 321 part ${index + 1} of ${result.size}: "))
+            assertTrue(part.length <= 100)
+        }
     }
 }

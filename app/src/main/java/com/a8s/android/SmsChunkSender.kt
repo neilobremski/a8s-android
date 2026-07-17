@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.telephony.SmsManager
+import java.security.SecureRandom
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -17,7 +18,7 @@ class SmsChunkSender(private val context: Context) {
         val result: ArrayBlockingQueue<Int>,
     )
 
-    private val requestSequence = AtomicInteger(0)
+    private val requestSequence = AtomicInteger(SecureRandom().nextInt())
     private val results = ConcurrentHashMap<Int, ArrayBlockingQueue<Int>>()
 
     fun complete(requestId: Int, resultCode: Int) {
