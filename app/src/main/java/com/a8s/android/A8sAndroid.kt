@@ -160,7 +160,7 @@ class A8sAndroid : Application() {
         val remotes: Map<String, RemoteConfig>,
         val services: List<StorageService>,
         val smsThrottleMs: Long,
-        val smsTruncateLimit: Int,
+        val smsChunkLimit: Int,
     )
 
     override fun onCreate() {
