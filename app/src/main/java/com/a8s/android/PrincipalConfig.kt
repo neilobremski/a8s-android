@@ -167,16 +167,16 @@ object ConfigParser {
         require(smsThrottleMs >= 0L) { "sms_throttle_s must not be negative" }
 
         val settings = root.optJSONObject("settings")
-        var smsTruncateLimit = 800
+        var smsChunkLimit = SmsSegmenter.DEFAULT_CHUNK_CHARS
         if (settings != null) {
             rejectUnknownKeys(settings, SETTINGS_ALLOWED)
             if (settings.has("sms_truncate_limit")) {
-                smsTruncateLimit = settings.getInt("sms_truncate_limit")
-                require(smsTruncateLimit > 0) { "sms_truncate_limit must be positive" }
+                smsChunkLimit = settings.getInt("sms_truncate_limit")
+                    .coerceAtLeast(SmsSegmenter.MIN_CHUNK_CHARS)
             }
         }
 
-        return A8sAndroid.Config(device, registry, remotes, services, smsThrottleMs, smsTruncateLimit)
+        return A8sAndroid.Config(device, registry, remotes, services, smsThrottleMs, smsChunkLimit)
     }
 
     private fun parseRoles(obj: JSONObject): Map<String, RoleSpec> {

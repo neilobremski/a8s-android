@@ -34,7 +34,7 @@ The app is configured via a JSON file with the following schema:
   ],
   "routing": { "sms_inbound_agent": "alice" },
   "sms_throttle_s": 10,
-  "settings": { "sms_truncate_limit": 800 },
+  "settings": { "sms_truncate_limit": 1000 },
   "remotes": {
     "hivemq": {
       "transport": "mqtt",
@@ -87,14 +87,16 @@ The app is configured via a JSON file with the following schema:
   URLs need to be downloaded for inbound or uploaded for outbound.
   Per-service options: `expiry_hours` (1, 6, 24, 48; default 24) and
   `timeout_s` (default 30).
-- **`sms_throttle_s`** — non-negative delay between carrier SMS units.
-  Each unit waits for Android's sent callback (or a 30-second timeout)
-  before the next unit is submitted. The logical-message queue holds at
-  most 100 entries.
-- **`settings.sms_truncate_limit`** — positive character threshold for
-  large SMS output (default 800). With a storage service configured, larger
-  output becomes a short preview plus an uploaded text-file URL; otherwise
-  it is sent as individually paced `[N/M]` carrier units.
+- **`sms_throttle_s`** — non-negative delay between long-message chunks.
+  Each chunk waits for every Android sent callback before the next chunk is
+  submitted; each internal carrier part has a 30-second callback timeout.
+  The logical-message queue holds at most 100 entries.
+- **`settings.sms_truncate_limit`** — logical SMS chunk size in characters
+  (default 1000, minimum 100). Longer output is split at word boundaries
+  without breaking URLs, and each chunk is labeled
+  `Message <id> part <N> of <M>:`. Android submits each chunk as one multipart
+  SMS so its carrier parts appear as one message bubble. Use
+  `/config set sms_chunk_limit <characters>` to update it on-device.
 
 ### Routing summary
 
@@ -132,6 +134,7 @@ verbs).
 | `/send <number> <message>` | Send an SMS to an explicit phone number. |
 | `/mms <number> <url>` | Download media from `url`; send the URL as text SMS to `number` (true MMS requires default-SMS-app role). |
 | `/reply <number> <text>` | Fire the cached notification reply action for `number` (RCS-capable). Lists cached numbers if none match. |
+| `/config [get\|set] sms_chunk_limit [characters]` | Show or change the logical SMS chunk size (default 1000, minimum 100). |
 | `/download <url> [filename]` | Download a file to `/sdcard/Download`. Tries configured storage services first, falls back to raw HTTP. |
 | `/dashboard bg <url>` | Download an image and set it as the Dashboard tab background. |
 | `/dashboard content <html>` | Set arbitrary HTML as Dashboard tab content. |

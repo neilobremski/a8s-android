@@ -16,6 +16,7 @@ class ConfigParserTest {
         assertEquals(2, cfg.registry.localAgents.size)
         assertEquals("+15551234567", cfg.registry.phoneForAgent("operator-phone"))
         assertEquals(10000L, cfg.smsThrottleMs)
+        assertEquals(1000, cfg.smsChunkLimit)
     }
 
     @Test
@@ -68,7 +69,24 @@ class ConfigParserTest {
         )
         val cfg = ConfigParser.parse(json)
         assertEquals(10000L, cfg.smsThrottleMs)
-        assertEquals(500, cfg.smsTruncateLimit)
+        assertEquals(500, cfg.smsChunkLimit)
+    }
+
+    @Test
+    fun `parse clamps stored SMS chunk limit to minimum`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "settings": {"sms_truncate_limit": 99}
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(SmsSegmenter.MIN_CHUNK_CHARS, ConfigParser.parse(json).smsChunkLimit)
     }
 
     @Test

@@ -6,7 +6,7 @@ object CmdConfig {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
         val args = cmd.args
         if (args.isEmpty()) {
-            val text = "Settings:\nsms_truncate_limit = ${config.smsTruncateLimit}"
+            val text = "Settings:\nsms_chunk_limit = ${config.smsChunkLimit}"
             service.replyToSender(config, cmd, text)
             return
         }
@@ -17,7 +17,9 @@ object CmdConfig {
                 return
             }
             when (val key = args[1]) {
-                "sms_truncate_limit" -> service.replyToSender(config, cmd, "$key = ${config.smsTruncateLimit}")
+                "sms_chunk_limit", "sms_truncate_limit" -> {
+                    service.replyToSender(config, cmd, "sms_chunk_limit = ${config.smsChunkLimit}")
+                }
                 else -> service.replyToSender(config, cmd, "unknown setting: $key")
             }
             return
@@ -30,15 +32,19 @@ object CmdConfig {
             val key = args[1]
             val value = args[2]
             when (key) {
-                "sms_truncate_limit" -> {
+                "sms_chunk_limit", "sms_truncate_limit" -> {
                     val limit = value.toIntOrNull()
-                    if (limit == null) {
-                        service.replyToSender(config, cmd, "invalid integer: $value")
+                    if (limit == null || limit < SmsSegmenter.MIN_CHUNK_CHARS) {
+                        service.replyToSender(
+                            config,
+                            cmd,
+                            "sms_chunk_limit must be an integer of at least ${SmsSegmenter.MIN_CHUNK_CHARS}",
+                        )
                         return
                     }
                     val updated = updateSetting(service, "sms_truncate_limit", limit)
                     if (updated) {
-                        service.replyToSender(config, cmd, "set $key = $limit")
+                        service.replyToSender(config, cmd, "set sms_chunk_limit = $limit")
                     } else {
                         service.replyToSender(config, cmd, "failed to update config")
                     }

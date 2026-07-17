@@ -6,35 +6,75 @@ import org.junit.jupiter.api.Test
 
 class SmsSegmenterTest {
     @Test
-    fun `short GSM text remains one carrier unit`() {
-        assertEquals(listOf("hello"), SmsSegmenter.split("hello") { it.length <= 160 })
+    fun `short text remains one unprefixed logical message`() {
+        assertEquals(listOf("hello"), SmsSegmenter.split("hello", 1000, 123))
     }
 
     @Test
-    fun `long text is prefixed and every unit fits platform limit`() {
-        val result = SmsSegmenter.split("word ".repeat(100)) { it.length <= 70 }
+    fun `multiple carrier parts below chunk limit remain one logical message`() {
+        val body = "word ".repeat(80)
+
+        assertTrue(body.length > 160)
+        assertEquals(listOf(body), SmsSegmenter.split(body, 1000, 123))
+    }
+
+    @Test
+    fun `long text has readable message and part headers`() {
+        val result = SmsSegmenter.split("word ".repeat(100), 120, 123)
+
         assertTrue(result.size > 1)
         result.forEachIndexed { index, part ->
-            assertTrue(part.startsWith("[${index + 1}/${result.size}] "))
-            assertTrue(part.length <= 70)
+            assertTrue(part.startsWith("Message 123 part ${index + 1} of ${result.size}: "))
+            assertTrue(part.length <= 120)
         }
     }
 
     @Test
-    fun `Unicode proxy limit and emoji preserve surrogate pairs`() {
-        val result = SmsSegmenter.split("🙂".repeat(100)) { it.codePointCount(0, it.length) <= 40 }
+    fun `Unicode boundaries preserve surrogate pairs`() {
+        val result = SmsSegmenter.split(("words 🙂 ").repeat(40), 100, 7)
+
         assertTrue(result.size > 1)
         result.forEach { part ->
-            assertTrue(part.codePointCount(0, part.length) <= 40)
             assertTrue(!part.last().isHighSurrogate())
+            assertTrue(part.length <= 100)
         }
     }
 
     @Test
-    fun `word and URL stay intact when they fit`() {
-        val url = "https://example.test/a/long/path"
-        val result = SmsSegmenter.split("before words $url after words ".repeat(4)) { it.length <= 80 }
+    fun `words and URLs stay intact`() {
+        val url = "https://example.test/a/long/path?with=query&and=value"
+        val body = "before words $url after words ".repeat(6)
+        val result = SmsSegmenter.split(body, 140, 88)
+
+        assertEquals(6, result.sumOf { it.split(url).size - 1 })
         assertTrue(result.none { it.endsWith("https://") })
-        assertEquals(4, result.sumOf { it.split(url).size - 1 })
+        assertTrue(result.none { it.endsWith("example.test") })
+    }
+
+    @Test
+    fun `URL longer than chunk budget is kept whole`() {
+        val url = "https://example.test/" + "path".repeat(40)
+        val result = SmsSegmenter.split("open $url when ready", 100, 9)
+
+        assertEquals(1, result.sumOf { it.split(url).size - 1 })
+        assertTrue(result.any { it.length > 100 })
+    }
+
+    @Test
+    fun `single oversized URL remains one unprefixed message`() {
+        val url = "https://example.test/" + "path".repeat(40)
+
+        assertEquals(listOf(url), SmsSegmenter.split(url, 100, 9))
+    }
+
+    @Test
+    fun `part totals crossing ten reserve the wider prefix`() {
+        val result = SmsSegmenter.split("word ".repeat(220), 100, 321)
+
+        assertTrue(result.size >= 10)
+        result.forEachIndexed { index, part ->
+            assertTrue(part.startsWith("Message 321 part ${index + 1} of ${result.size}: "))
+            assertTrue(part.length <= 100)
+        }
     }
 }

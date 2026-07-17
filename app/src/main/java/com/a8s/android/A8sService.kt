@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -31,8 +30,6 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLSocketFactory
 
 class A8sService : LifecycleService() {
@@ -44,16 +41,13 @@ class A8sService : LifecycleService() {
         private const val UPDATE_CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
         private const val UPDATE_CHECK_INITIAL_DELAY_MS = 60L * 1000
         private const val SMS_QUEUE_CAPACITY = 100
-        private const val SMS_RESULT_TIMEOUT_MS = 30_000L
         private const val DEFAULT_SMS_THROTTLE_MS = 10_000L
-        private const val LARGE_SMS_PREVIEW_CHARS = 120
 
         var instance: A8sService? = null
             private set
     }
 
-    private val smsRequestSeq = java.util.concurrent.atomic.AtomicInteger(0)
-    private val smsResults = ConcurrentHashMap<Int, ArrayBlockingQueue<Int>>()
+    private val smsChunkSender by lazy { SmsChunkSender(this) }
     private var sentResultReceiver: BroadcastReceiver? = null
 
     // One paho client per configured remote, keyed by remote name. The
@@ -204,7 +198,7 @@ class A8sService : LifecycleService() {
                     else -> "rc=$rc"
                 }
                 A8sAndroid.log("SMS send result $verdict to $recipient (part ${part + 1}/$of)")
-                smsResults.remove(requestId)?.offer(rc)
+                smsChunkSender.complete(requestId, rc)
             }
         }
         val filter = IntentFilter(SMS_SENT_ACTION)
@@ -230,6 +224,7 @@ class A8sService : LifecycleService() {
         }
         sentResultReceiver = null
         smsSenderThread?.interrupt()
+        smsChunkSender.clear()
         mqttClients.values.forEach { c ->
             try { c.disconnect() } catch (_: Exception) { }
         }
@@ -638,7 +633,7 @@ class A8sService : LifecycleService() {
     }
 
     internal fun sendSms(to: String, body: String) {
-        val sms = OutboundSms(smsRequestSeq.incrementAndGet(), to, body)
+        val sms = OutboundSms(SmsMessageIds.next(this), to, body)
         if (outboundSmsQueue.offer(sms)) {
             A8sAndroid.log("SMS logical message ${sms.id} queued for $to (depth ${outboundSmsQueue.size}/$SMS_QUEUE_CAPACITY)")
         } else {
@@ -659,66 +654,26 @@ class A8sService : LifecycleService() {
                 @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
-            val deliveryBody = prepareSmsDeliveryBody(sms)
-            val segments = SmsSegmenter.split(deliveryBody) { smsManager.divideMessage(it).size == 1 }
-            recordOutboundSmsParts(sms.to, segments)
-            segments.forEachIndexed { i, segment ->
-                val requestId = smsRequestSeq.incrementAndGet()
-                val intent = Intent(SMS_SENT_ACTION).apply {
-                    setPackage(packageName)
-                    putExtra("recipient", sms.to)
-                    putExtra("part", i)
-                    putExtra("of", segments.size)
-                    putExtra("request_id", requestId)
+            val chunkLimit = A8sAndroid.config?.smsChunkLimit ?: SmsSegmenter.DEFAULT_CHUNK_CHARS
+            val chunks = SmsSegmenter.split(sms.body, chunkLimit, sms.id)
+            var carrierPartCount = 0
+            chunks.forEachIndexed { index, chunk ->
+                val carrierParts = smsManager.divideMessage(chunk)
+                carrierPartCount += carrierParts.size
+                recordOutboundSmsParts(sms.to, listOf(chunk) + carrierParts)
+                if (!smsChunkSender.send(sms.to, sms.id, index, chunks.size, carrierParts, smsManager)) return
+                if (index < chunks.lastIndex) {
+                    Thread.sleep(A8sAndroid.config?.smsThrottleMs ?: DEFAULT_SMS_THROTTLE_MS)
                 }
-                val result = ArrayBlockingQueue<Int>(1)
-                smsResults[requestId] = result
-                val sentIntent = PendingIntent.getBroadcast(
-                    this, requestId, intent,
-                    PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
-                )
-                smsManager.sendTextMessage(sms.to, null, segment, sentIntent, null)
-                val rc = result.poll(SMS_RESULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                smsResults.remove(requestId)
-                if (rc == null) {
-                    A8sAndroid.log("SMS logical message ${sms.id} halted after callback timeout")
-                    return
-                }
-                if (rc != android.app.Activity.RESULT_OK) {
-                    A8sAndroid.log("SMS logical message ${sms.id} halted after failed segment ${i + 1}/${segments.size}")
-                    return
-                }
-                if (i < segments.lastIndex) Thread.sleep(A8sAndroid.config?.smsThrottleMs ?: DEFAULT_SMS_THROTTLE_MS)
             }
-            A8sAndroid.log("SMS logical message ${sms.id} submitted to ${sms.to} (${segments.size} carrier segment(s))")
+            A8sAndroid.log(
+                "SMS message ${sms.id} submitted to ${sms.to} " +
+                    "(${chunks.size} logical chunk(s), $carrierPartCount carrier part(s))",
+            )
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         } catch (e: Exception) {
             A8sAndroid.log("SMS Send Failed: " + e.message)
-        }
-    }
-
-    private fun prepareSmsDeliveryBody(sms: OutboundSms): String {
-        val config = A8sAndroid.config ?: return sms.body
-        if (sms.body.length <= config.smsTruncateLimit || config.services.isEmpty()) return sms.body
-        val file = File(cacheDir, "sms-output-${sms.id}.txt")
-        return try {
-            file.writeText(sms.body)
-            val files = buildFilesArray(config, listOf(file))
-            val urls = files.optJSONObject(0)?.optJSONArray("storage")
-            val url = urls?.optString(0).orEmpty()
-            if (url.isBlank()) {
-                A8sAndroid.log("SMS logical message ${sms.id}: large-output upload failed; using paced segments")
-                sms.body
-            } else {
-                A8sAndroid.log("SMS logical message ${sms.id}: large output replaced by preview + uploaded text")
-                sms.body.take(LARGE_SMS_PREVIEW_CHARS).trimEnd() + "…\nFull message: $url"
-            }
-        } catch (e: Exception) {
-            A8sAndroid.log("SMS logical message ${sms.id}: large-output fallback failed (${e.message})")
-            sms.body
-        } finally {
-            file.delete()
         }
     }
 
