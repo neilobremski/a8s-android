@@ -85,7 +85,7 @@ object NicknamesManager {
         canonicalNames: Set<String>,
     ): TellResolution? {
         if (args.size < 2) return null
-        val first = args.first().trim().lowercase(Locale.ROOT)
+        val first = normalizeSpokenTarget(args.first())
         val canonical = canonicalNames.associateBy { it.trim().lowercase(Locale.ROOT) }
         if (first in canonical) {
             return TellResolution(args.first(), first, first, args.drop(1).joinToString(" "), false, enabled)
@@ -114,10 +114,15 @@ object NicknamesManager {
         return TellResolution(args.first(), first, first, args.drop(1).joinToString(" "), false, enabled)
     }
 
+    private fun normalizeSpokenTarget(raw: String): String =
+        raw.trim().trim { it in SPOKEN_PUNCTUATION }.lowercase(Locale.ROOT)
+
     fun getAll(context: Context): Map<String, String> {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return prefs.all.mapNotNull { (key, value) ->
             (value as? String)?.let { key to it }
         }.toMap()
     }
+
+    private val SPOKEN_PUNCTUATION = setOf('.', ',', '!', '?', ':', ';', '\'', '"', '(', ')', '[', ']')
 }
