@@ -55,8 +55,12 @@ object SmsSegmenter {
         return index
     }
 
+    /**
+     * Kept short because it is spent from the same budget as the text and is
+     * mostly heard read aloud, where the ceremony is noise.
+     */
     private fun prefix(messageId: Int, part: Int, total: Int): String =
-        "Message $messageId part $part of $total: "
+        "$part of $total for $messageId: "
 
     const val DEFAULT_CHUNK_CHARS = 1000
     const val MIN_CHUNK_CHARS = 100

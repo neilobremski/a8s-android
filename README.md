@@ -94,7 +94,7 @@ The app is configured via a JSON file with the following schema:
 - **`settings.sms_truncate_limit`** — logical SMS chunk size in characters
   (default 1000, minimum 100). Longer output is split at word boundaries
   without breaking URLs, and each chunk is labeled
-  `Message <id> part <N> of <M>:`. Android submits each chunk as one multipart
+  `<N> of <M> for <id>:`. Android submits each chunk as one multipart
   SMS so its carrier parts appear as one message bubble. Use
   `/config set sms_chunk_limit <characters>` to update it on-device.
 
