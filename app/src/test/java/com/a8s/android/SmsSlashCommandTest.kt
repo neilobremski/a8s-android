@@ -54,4 +54,33 @@ class SmsSlashCommandTest {
         assertEquals("tell", auth.command.name)
         assertEquals(listOf("alice", "hello", "there"), auth.command.args)
     }
+
+    @Test
+    fun `mixed-case tell with punctuated canonical target routes correctly`() {
+        val cfg = TestFixtures.config(
+            principalsJson = """
+                [
+                  {"agent":"cody","roles":["owner"]},
+                  {"agent":"operator-phone","phone":"+15551234567","roles":["owner"]}
+                ]
+            """.trimIndent(),
+        )
+        val classified = SmsSlashCommand.classify(
+            "+15551234567",
+            "/Tell Cody, send the status update",
+            cfg,
+        ) as SmsSlashCommand.Result.Authorized
+        val resolved = NicknamesManager.resolveTellFromMappings(
+            classified.command.args,
+            enabled = true,
+            mappings = emptyMap(),
+            canonicalNames = cfg.registry.localAgents + cfg.device,
+        )!!
+
+        assertEquals("tell", classified.command.name)
+        assertEquals("Cody,", resolved.rawTarget)
+        assertEquals("cody", resolved.normalizedTarget)
+        assertEquals("cody", resolved.resolved)
+        assertEquals("send the status update", resolved.message)
+    }
 }

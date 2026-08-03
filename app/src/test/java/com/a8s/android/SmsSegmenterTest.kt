@@ -24,7 +24,7 @@ class SmsSegmenterTest {
 
         assertTrue(result.size > 1)
         result.forEachIndexed { index, part ->
-            assertTrue(part.startsWith("Message 123 part ${index + 1} of ${result.size}: "))
+            assertTrue(part.startsWith("${index + 1} of ${result.size} for 123: "))
             assertTrue(part.length <= 120)
         }
     }
@@ -73,7 +73,7 @@ class SmsSegmenterTest {
 
         assertTrue(result.size >= 10)
         result.forEachIndexed { index, part ->
-            assertTrue(part.startsWith("Message 321 part ${index + 1} of ${result.size}: "))
+            assertTrue(part.startsWith("${index + 1} of ${result.size} for 321: "))
             assertTrue(part.length <= 100)
         }
     }
