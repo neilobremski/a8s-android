@@ -121,8 +121,9 @@ the PR will fail.
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
 | `Updater.kt` | `/update` plumbing — fetches GitHub Releases JSON, picks the `a8s-android-*-debug.apk` asset, downloads it, and `compareVersions` to decide if newer. The actual install kicks off via `ACTION_VIEW` + FileProvider in `A8sService.triggerInstallPrompt`. JSON parsing + version compare are unit-tested; HTTP and FileProvider sit in thin Android-only wrappers. |
 | `Screenshot.kt` | `/screenshot` plumbing — `MediaProjection` + `ImageReader` + `VirtualDisplay` to grab one frame, write as PNG. The user grants projection consent once via the **Enable Screen Capture** button in MainActivity; the `(resultCode, Intent)` pair is held in the service for the lifetime of the process. Each `/screenshot` builds a fresh `MediaProjection` from the cached consent, captures + releases to keep the OS's media-projection notification quiet between shots. **Consent is in-memory only and lost on process restart** (e.g. after `/update` reinstalls the app). The "Grant All Permissions" button in MainActivity re-fires the projection-consent dialog so it's bundled into one tap with the other dangerous-perm grants. |
-| `CmdHelpers.kt` | Pure-Kotlin parsing + formatters for device commands. `KNOWN_COMMANDS` is the single source of truth for the `unknown command` listing. `buildSendBody` appends envelope-file storage URLs to SMS text (1600-char budget). Unit-tested in `CmdHelpersTest`. |
+| `CmdHelpers.kt` | Pure-Kotlin parsing + formatters for device commands. `KNOWN_COMMANDS` is the single source of truth for the `unknown command` listing. `buildSendBody` appends envelope-file storage URLs to SMS text (1600-char budget), or an `ATTACHMENT UNAVAILABLE: <name>: <why>` line when an entry carries an error. Unit-tested in `CmdHelpersTest`. |
 | `FileDownloader.kt` | Pure-Kotlin helper: given `List<EnvelopeFile>` + storage services, downloads to a dest dir. Per URL it tries each configured service, then falls back to a plain https GET via `HttpGet`, so a sender can add a storage backend without receivers being reconfigured. Destination names go through `AttachmentPath`. The https fetch is injected (`HttpFetch`) so unit tests never touch the network. `buildSmsBody` merges fallback URLs for failed downloads. `/send` still appends URLs inline via `buildSendBody` rather than downloading first. |
+| `WebdavService.kt` | WebDAV backend, and the preferred one: storage the operator controls, no third-party expiry, and the host an ISP is least likely to block. Config `webdav://host/path` maps to HTTPS for the PUT. `base_url` is optional and is what makes an upload useful — the DAV endpoint needs credentials, so only a `base_url` gives a recipient a bare GET. Without one, `producesPublicUrl` is false. |
 | `HttpGet.kt` | The one downloader. https only, at most 3 redirects with the scheme re-checked at every hop, and a 50 MiB cap checked against `Content-Length` and again while streaming. Writes through a `.part` sibling so a partial transfer never looks complete. Mirrors `apps/a8s/services/http_get.py` upstream. `/mms`, `/download` and `/dashboard` all route through it. |
 | `AttachmentPath.kt` | Resolves `filename` from an envelope against a destination directory. The name arrives on the wire, so it must be a single path segment — otherwise the sender chooses where bytes land. Mirrors `apps/a8s/services/attachment_path.py`. |
 | `CmdMms.kt` | `/mms <number> <url>` — downloads media (storage service, else `HttpGet`), sends URL as text SMS (true MMS sending requires default SMS app role). |
@@ -194,6 +195,13 @@ With attachments, `files` is a non-empty array:
 - `from` is force-stamped by the host's a8s router on its own outbox
   pass (see `apps/a8s/mailbox.py:526` upstream). On our side, treat
   `from` as the **unforgeable identity** for authorization decisions.
+- **An attachment travels as a public URL or not at all.** The phone cannot
+  send bytes — MMS needs the default SMS app role — so `StorageService`
+  declares `producesPublicUrl`, and an upload that yields none marks the
+  envelope entry `error: ATTACHMENT_UNAVAILABLE` with a `detail`. Recipients
+  read that instead of a filename they cannot fetch. `preference` orders the
+  upload fan-out (own store before public paste host); the recipient tries the
+  URLs in envelope order, so ordering is what "preferred storage" means.
 - `files` is mandatory shape (empty array when no attachments). Outbound
   replies upload local files via `A8sService.buildFilesArray` (every
   configured storage service gets a try; all successful URLs land in

@@ -26,15 +26,28 @@ object CmdHelpers {
         return SendParts(number, body)
     }
 
+    /**
+     * Append what the reader needs in order to get each attachment. This phone
+     * cannot send bytes, so a URL is the delivery mechanism; when there is no
+     * public URL, say that plainly rather than leaving a filename the reader
+     * has no way to act on.
+     */
     fun buildSendBody(text: String, files: List<EnvelopeFile>): String {
-        val urls = files.flatMap { it.storageUrls }
-        if (urls.isEmpty()) return text
-        val sb = StringBuilder(text)
-        for (url in urls) {
-            sb.append("\n$url")
+        val lines = mutableListOf<String>()
+        for (f in files) {
+            if (f.error != null) {
+                val why = f.detail.ifBlank { f.error }
+                lines += "$ATTACHMENT_FAILURE_PREFIX${f.filename}: $why"
+            } else {
+                lines += f.storageUrls
+            }
         }
-        return sb.toString()
+        if (lines.isEmpty()) return text
+        return text + "\n" + lines.joinToString("\n")
     }
+
+    /** Matches `ATTACHMENT_FAILURE_PREFIX` in `apps/a8s/definitions.py`. */
+    const val ATTACHMENT_FAILURE_PREFIX = "ATTACHMENT UNAVAILABLE: "
 
     // ── /mms ─────────────────────────────────────────────────────────────
 

@@ -128,7 +128,12 @@ object SmsCommandDelivery {
                 if (url.isNotBlank()) urls += url
             }
             if (filename.isNotBlank()) {
-                out += EnvelopeFile(filename, urls)
+                out += EnvelopeFile(
+                    filename,
+                    urls,
+                    error = obj.optString("error").ifBlank { null },
+                    detail = obj.optString("detail"),
+                )
             }
         }
         return out
