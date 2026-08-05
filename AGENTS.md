@@ -254,6 +254,15 @@ Pure function order (`decideRoute`):
     }
   },
   "services": {
+    "files": {
+      "service": "webdav",
+      "url": "webdav://dav.example.com/dav/files/user/a8s",
+      "base_url": "https://files.example.com/a8s",
+      "user": "user@example.com",
+      "password": "app-password",
+      "prefix": "a8s",
+      "timeout_s": 60
+    },
     "tempfile": {
       "service": "tempfile_org",
       "url": "https://tempfile.org",
@@ -282,11 +291,23 @@ shared `handleMqttMessage` regardless of source. Failed per-remote
 publishes land in `PublishRetryQueue` and flush on reconnect.
 
 **Storage services** — `services` is a map keyed by local name, each
-entry dispatched by `service` field. Currently only `tempfile_org` is
-implemented. Active paths: outbound uploads (`/screenshot`, `/photo`,
+entry dispatched by `service` field. Two kinds: `webdav` and
+`tempfile_org`. Active paths: outbound uploads (`/screenshot`, `/photo`,
 `/video`, `/audio`, `/cat` attachments, incoming SMS/RCS/MMS media),
 inbound retrieval (`/download`, `/mms`, `/dashboard bg`). `/screenshot`
 requires at least one configured service.
+
+Uploads fan out to every backend and `parseServices` sorts by
+`StorageService.preference`, so `webdav` goes first and its URL leads the
+`storage` array — a recipient tries them in that order. Downloads try each
+backend and then fall back to `HttpGet`, so a receiver needs no matching
+backend for an ordinary public URL.
+
+`base_url` is what makes a `webdav` upload deliverable: the DAV endpoint is
+credential-gated, so only `base_url` gives a recipient a bare GET. Without
+one, `producesPublicUrl` is false and the attachment is published as
+`error: ATTACHMENT_UNAVAILABLE` rather than as a URL nobody can use. A
+plaintext `base_url` is rejected at parse time.
 
 - The user picks the file via Storage Access Framework; the URI is
   persisted (`takePersistableUriPermission`) so reloads work post-reboot.

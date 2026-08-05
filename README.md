@@ -45,6 +45,13 @@ The app is configured via a JSON file with the following schema:
     }
   },
   "services": {
+    "files": {
+      "service": "webdav",
+      "url": "webdav://dav.example.com/dav/files/user/a8s",
+      "base_url": "https://files.example.com/a8s",
+      "user": "user@example.com",
+      "password": "app-password"
+    },
     "tempfile": {
       "service": "tempfile_org",
       "url": "https://tempfile.org"
@@ -81,12 +88,41 @@ The app is configured via a JSON file with the following schema:
   remote delivered it. The host cluster's a8s router dedups by ULID, so
   multi-remote delivery is idempotent.
 - **`services`** *(optional)* — map of cross-cluster file-storage
-  backends. Each entry has a `service` kind and a `url`. Currently the
-  only supported kind is `tempfile_org` (https://tempfile.org;
-  pure-stdlib HTTP). Required when an envelope's `files[i].storage`
-  URLs need to be downloaded for inbound or uploaded for outbound.
-  Per-service options: `expiry_hours` (1, 6, 24, 48; default 24) and
-  `timeout_s` (default 30).
+  backends. Each entry has a `service` kind and a `url`.
+
+  This phone cannot send bytes — MMS needs the default SMS app role — so
+  an outbound attachment travels as a public URL or it does not travel.
+  Configure at least one backend that yields a URL the recipient can GET
+  with no credentials. When none does, the message says
+  `ATTACHMENT UNAVAILABLE: <name>: <why>` instead of carrying a filename
+  the reader cannot fetch.
+
+  Uploads fan out to **every** configured backend and all resulting URLs
+  ride along, so a host that one network blocks costs redundancy rather
+  than the file. Order is by kind preference, not by position in the
+  JSON: `webdav` is uploaded first, and a recipient tries the URLs in the
+  order the envelope lists them.
+
+  Downloads try each configured backend, then fall back to a plain https
+  GET. A receiver therefore needs **no** matching backend to read an
+  ordinary public URL — a presigned S3 link or an `rclone link` result
+  arrives fine with nothing configured.
+
+  | Kind | `url` | Options |
+  | ---- | ----- | ------- |
+  | `webdav` | `webdav://<host>/<path>` (maps to HTTPS on the wire) | `base_url`, `user`, `password`, `prefix` (default `a8s`), `timeout_s` (default 60) |
+  | `tempfile_org` | `https://tempfile.org` | `expiry_hours` (1, 6, 24, 48; default 24), `timeout_s` (default 30) |
+
+  **`base_url` is what makes a WebDAV upload useful.** The DAV endpoint
+  needs credentials, so a recipient cannot fetch from it. `base_url` is
+  the public https prefix the same object is served at, and
+  `<base_url>/<prefix>/<token>/<filename>` must resolve for anyone. It is
+  optional; without it the upload still happens, but the URL is
+  credential-gated and the attachment counts as undeliverable. A
+  plaintext `base_url` is refused when the config is read.
+
+  Keeping `tempfile_org` alongside `webdav` is worthwhile: SMS does not
+  always arrive, and a second URL is a second chance at the bytes.
 - **`sms_throttle_s`** — non-negative delay between long-message chunks.
   Each chunk waits for every Android sent callback before the next chunk is
   submitted; each internal carrier part has a 30-second callback timeout.
