@@ -53,24 +53,18 @@ object CmdMms {
     }
 
     private fun tryRawDownload(url: String, dest: File): Boolean {
-        return try {
-            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 30_000
-            conn.instanceFollowRedirects = true
-            if (conn.responseCode !in 200..299) {
-                conn.disconnect()
-                return false
+        // One downloader with one set of rules: https only, a bounded redirect
+        // chain, and a size cap. See [HttpGet].
+        return when (val r = HttpGet.download(url, dest)) {
+            is HttpGet.Result.Ok -> dest.length() > 0
+            is HttpGet.Result.NotHttps -> {
+                A8sAndroid.log("MMS download refused: $url is not https")
+                false
             }
-            dest.parentFile?.mkdirs()
-            conn.inputStream.use { input ->
-                dest.outputStream().use { input.copyTo(it) }
+            is HttpGet.Result.Failed -> {
+                A8sAndroid.log("MMS download failed: ${r.reason}")
+                false
             }
-            conn.disconnect()
-            dest.length() > 0
-        } catch (e: Exception) {
-            A8sAndroid.log("MMS raw download failed: ${e.message}")
-            false
         }
     }
 }

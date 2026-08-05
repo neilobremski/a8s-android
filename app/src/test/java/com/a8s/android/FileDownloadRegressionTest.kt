@@ -16,6 +16,9 @@ class FileDownloadRegressionTest {
 
     private fun config(): A8sAndroid.Config = TestFixtures.config()
 
+    /** No network in unit tests: the https fallback is stubbed per test. */
+    private val noHttp: HttpFetch = { _, _ -> HttpGet.Result.Failed("stubbed: offline") }
+
     @Test
     fun `non-command content returns NotACommand`() {
         val payload = JSONObject().apply {
@@ -87,7 +90,7 @@ class FileDownloadRegressionTest {
         val files = listOf(
             EnvelopeFile("photo.jpg", listOf("https://tempfile.org/abc/")),
         )
-        val results = FileDownloader.downloadFiles(files, listOf(svc), tempDir)
+        val results = FileDownloader.downloadFiles(files, listOf(svc), tempDir, noHttp)
         assertEquals(1, results.size)
         assertNotNull(results[0].file)
         assertEquals("photo.jpg", results[0].file!!.name)
@@ -102,7 +105,7 @@ class FileDownloadRegressionTest {
         val files = listOf(
             EnvelopeFile("photo.jpg", listOf("https://tempfile.org/abc/")),
         )
-        val results = FileDownloader.downloadFiles(files, emptyList(), tempDir)
+        val results = FileDownloader.downloadFiles(files, emptyList(), tempDir, noHttp)
         assertNull(results[0].file)
         assertEquals("https://tempfile.org/abc/", results[0].fallbackUrl)
     }
