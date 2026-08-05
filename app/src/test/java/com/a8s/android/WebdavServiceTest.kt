@@ -13,8 +13,7 @@ class WebdavServiceTest {
         id = "fm",
         davUrl = "webdav://dav.example.com/dav/files/user/a8s",
         baseUrl = baseUrl,
-        user = "user@example.com",
-        password = "secret",
+        credentials = WebdavService.Credentials("user@example.com", "secret"),
     )
 
     @Test

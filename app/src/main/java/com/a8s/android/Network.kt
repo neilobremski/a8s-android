@@ -76,12 +76,14 @@ object Network {
                     spec,
                     SERVICE_RESERVED + setOf("base_url", "user", "password", "prefix", "timeout_s"),
                 )
+                val user = spec.optString("user").ifBlank { null }
                 WebdavService(
                     name,
                     url,
                     baseUrl = baseUrl,
-                    user = spec.optString("user").ifBlank { null },
-                    password = spec.optString("password").ifBlank { null },
+                    credentials = user?.let {
+                        WebdavService.Credentials(it, spec.optString("password"))
+                    },
                     prefix = prefix,
                     timeoutS = timeoutS,
                 )

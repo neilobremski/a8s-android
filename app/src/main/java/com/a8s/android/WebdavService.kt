@@ -38,11 +38,14 @@ class WebdavService(
     override val id: String,
     davUrl: String,
     private val baseUrl: String? = null,
-    private val user: String? = null,
-    private val password: String? = null,
+    private val credentials: Credentials? = null,
     private val prefix: String = DEFAULT_PREFIX,
     private val timeoutS: Int = DEFAULT_TIMEOUT_S,
 ) : StorageService {
+
+    /** Basic-auth pair for the DAV endpoint. Held together so the two never
+     *  drift apart, and so the constructor stays readable. */
+    data class Credentials(val user: String, val password: String)
 
     private val davBase: String = toHttps(davUrl).trimEnd('/')
     private val publicBase: String? = baseUrl?.trimEnd('/')
@@ -138,9 +141,9 @@ class WebdavService(
         }
 
     private fun authHeader(): String? {
-        val u = user ?: return null
-        if (u.isBlank()) return null
-        val raw = "$u:${password ?: ""}".toByteArray(Charsets.UTF_8)
+        val c = credentials ?: return null
+        if (c.user.isBlank()) return null
+        val raw = "${c.user}:${c.password}".toByteArray(Charsets.UTF_8)
         return "Basic " + Base64.encodeToString(raw, Base64.NO_WRAP)
     }
 
