@@ -31,7 +31,9 @@ object Network {
             val spec = obj.getJSONObject(name)
             out += buildService(name, spec)
         }
-        return out
+        // Preferred storage first. A recipient tries the URLs in the order the
+        // envelope lists them, so ordering here is what preference means.
+        return out.sortedBy { it.preference }
     }
 
     private fun parseRemoteSpec(spec: JSONObject): RemoteConfig? {
@@ -63,8 +65,31 @@ object Network {
                 rejectUnknownKeys(spec, SERVICE_RESERVED + setOf("expiry_hours", "timeout_s"))
                 TempFileOrgService(name, url, expiryHours = expiryHours, timeoutS = timeoutS)
             }
+            "webdav" -> {
+                val baseUrl = spec.optString("base_url").ifBlank { null }
+                require(baseUrl == null || baseUrl.startsWith("https://")) {
+                    "storage $name: base_url must be https"
+                }
+                val prefix = spec.optString("prefix").ifBlank { WebdavService.DEFAULT_PREFIX }
+                val timeoutS = spec.optInt("timeout_s", WebdavService.DEFAULT_TIMEOUT_S)
+                rejectUnknownKeys(
+                    spec,
+                    SERVICE_RESERVED + setOf("base_url", "user", "password", "prefix", "timeout_s"),
+                )
+                val user = spec.optString("user").ifBlank { null }
+                WebdavService(
+                    name,
+                    url,
+                    baseUrl = baseUrl,
+                    credentials = user?.let {
+                        WebdavService.Credentials(it, spec.optString("password"))
+                    },
+                    prefix = prefix,
+                    timeoutS = timeoutS,
+                )
+            }
             else -> throw IllegalArgumentException(
-                "storage $name: unsupported service kind '$kind' (known: tempfile_org)",
+                "storage $name: unsupported service kind '$kind' (known: tempfile_org, webdav)",
             )
         }
     }

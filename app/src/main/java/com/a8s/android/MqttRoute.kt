@@ -2,7 +2,13 @@ package com.a8s.android
 
 import org.json.JSONObject
 
-data class EnvelopeFile(val filename: String, val storageUrls: List<String>)
+data class EnvelopeFile(
+    val filename: String,
+    val storageUrls: List<String>,
+    /** Set when no route to the bytes exists — `ATTACHMENT_UNAVAILABLE`. */
+    val error: String? = null,
+    val detail: String = "",
+)
 
 sealed class MqttRoute {
     data class Command(
@@ -87,7 +93,12 @@ fun parseEnvelopeFiles(json: JSONObject): List<EnvelopeFile> {
                 if (url.isNotBlank()) urls += url
             }
         }
-        result += EnvelopeFile(filename, urls)
+        result += EnvelopeFile(
+            filename,
+            urls,
+            error = obj.optString("error").ifBlank { null },
+            detail = obj.optString("detail"),
+        )
     }
     return result
 }

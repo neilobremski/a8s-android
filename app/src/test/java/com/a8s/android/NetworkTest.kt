@@ -126,4 +126,59 @@ class NetworkTest {
         """.trimIndent())
         assertThrows(IllegalArgumentException::class.java) { Network.parseServices(json) }
     }
+
+    @Test
+    fun `webdav service parses with an optional base url`() {
+        val root = JSONObject(
+            """
+            {"services":{"fm":{"service":"webdav",
+              "url":"webdav://dav.example.com/dav/files/user/a8s",
+              "base_url":"https://files.example.com/a8s",
+              "user":"user@example.com","password":"secret"}}}
+            """.trimIndent(),
+        )
+        val services = Network.parseServices(root)
+        assertEquals(1, services.size)
+        assertEquals("fm", services[0].id)
+        assertTrue(services[0].producesPublicUrl)
+    }
+
+    @Test
+    fun `webdav without a base url parses but is not publicly fetchable`() {
+        val root = JSONObject(
+            """
+            {"services":{"fm":{"service":"webdav",
+              "url":"webdav://dav.example.com/dav/files/user/a8s"}}}
+            """.trimIndent(),
+        )
+        val services = Network.parseServices(root)
+        assertEquals(false, services[0].producesPublicUrl)
+    }
+
+    @Test
+    fun `a plaintext base url is refused`() {
+        val root = JSONObject(
+            """
+            {"services":{"fm":{"service":"webdav",
+              "url":"webdav://dav.example.com/dav",
+              "base_url":"http://files.example.com/a8s"}}}
+            """.trimIndent(),
+        )
+        assertThrows(IllegalArgumentException::class.java) { Network.parseServices(root) }
+    }
+
+    @Test
+    fun `webdav sorts ahead of tempfile regardless of config order`() {
+        val root = JSONObject(
+            """
+            {"services":{
+              "scratch":{"service":"tempfile_org","url":"https://tempfile.org"},
+              "fm":{"service":"webdav","url":"webdav://dav.example.com/dav",
+                    "base_url":"https://files.example.com/a8s"}}}
+            """.trimIndent(),
+        )
+        // A recipient tries the URLs in envelope order, so the preferred
+        // store has to be uploaded to first.
+        assertEquals(listOf("fm", "scratch"), Network.parseServices(root).map { it.id })
+    }
 }

@@ -564,20 +564,40 @@ class A8sService : LifecycleService() {
         val arr = org.json.JSONArray()
         for (file in files) {
             val urls = org.json.JSONArray()
+            var publicUrls = 0
+            var lastFailure = ""
             for (svc in config.services) {
                 try {
                     urls.put(svc.store(file))
+                    if (svc.producesPublicUrl) publicUrls++
                     A8sAndroid.log("Storage[${svc.id}] uploaded ${file.name}")
                 } catch (e: StorageException) {
+                    lastFailure = "${svc.id}: ${e.message}"
                     A8sAndroid.log("Storage[${svc.id}] upload failed: ${e.message}")
                 }
             }
             arr.put(JSONObject().apply {
                 put("filename", file.name)
                 if (urls.length() > 0) put("storage", urls)
+                // This phone cannot send bytes, so a public URL is the only
+                // route to the recipient. Saying so beats shipping a filename
+                // nobody can fetch and letting them hunt for it.
+                if (publicUrls == 0) {
+                    put("error", ATTACHMENT_UNAVAILABLE)
+                    put("detail", uploadFailureDetail(config, lastFailure))
+                    A8sAndroid.log(
+                        "Storage: no public URL for ${file.name} — recipients cannot fetch it",
+                    )
+                }
             })
         }
         return arr
+    }
+
+    private fun uploadFailureDetail(config: A8sAndroid.Config, lastFailure: String): String = when {
+        config.services.isEmpty() -> "no storage service configured; cannot publish attachments"
+        lastFailure.isNotEmpty() -> "no storage service produced a public URL ($lastFailure)"
+        else -> "no configured storage service produces a public URL"
     }
 
     private fun tryPublish(

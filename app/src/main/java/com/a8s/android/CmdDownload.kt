@@ -2,8 +2,6 @@ package com.a8s.android
 
 import android.os.Environment
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 
 object CmdDownload {
     fun run(service: A8sService, config: A8sAndroid.Config, cmd: MqttRoute.Command) {
@@ -44,26 +42,22 @@ object CmdDownload {
         }
     }
 
+    /**
+     * One downloader, one set of rules — https only, a bounded redirect chain,
+     * and a size cap. See [HttpGet]. `/download` and `/dashboard` share it with
+     * the attachment path so a URL is fetched the same way everywhere.
+     */
     internal fun rawDownload(urlStr: String, dest: File): Boolean {
-        return try {
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.connectTimeout = 15000
-            conn.readTimeout = 60000
-            conn.instanceFollowRedirects = true
-            conn.setRequestProperty("User-Agent", "a8s-android")
-            if (conn.responseCode !in 200..299) {
-                conn.disconnect()
-                return false
+        return when (val r = HttpGet.download(urlStr, dest)) {
+            is HttpGet.Result.Ok -> dest.length() > 0
+            is HttpGet.Result.NotHttps -> {
+                A8sAndroid.log("Download refused: $urlStr is not https")
+                false
             }
-            dest.parentFile?.mkdirs()
-            conn.inputStream.use { input ->
-                dest.outputStream().use { input.copyTo(it) }
+            is HttpGet.Result.Failed -> {
+                A8sAndroid.log("Download failed: ${r.reason}")
+                false
             }
-            conn.disconnect()
-            dest.length() > 0
-        } catch (e: Exception) {
-            A8sAndroid.log("Download raw HTTP failed: ${e.message}")
-            false
         }
     }
 }
