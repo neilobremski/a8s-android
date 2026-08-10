@@ -70,4 +70,25 @@ class WebdavServiceTest {
     fun `a service with no base url claims nothing`() {
         assertNull(svc(baseUrl = null).relativeKey("https://files.example.com/a8s/x/y.txt"))
     }
+
+    @Test
+    fun `every ancestor collection is listed outermost first`() {
+        assertEquals(
+            listOf("a8s", "a8s/3fa9c2d1"),
+            WebdavService.ancestorPaths("a8s/3fa9c2d1/photo.jpg"),
+        )
+    }
+
+    @Test
+    fun `a key with no directory needs no collections`() {
+        assertEquals(emptyList<String>(), WebdavService.ancestorPaths("photo.jpg"))
+    }
+
+    @Test
+    fun `stray slashes do not produce empty collections`() {
+        assertEquals(
+            listOf("a8s", "a8s/3fa9c2d1"),
+            WebdavService.ancestorPaths("/a8s//3fa9c2d1/photo.jpg"),
+        )
+    }
 }

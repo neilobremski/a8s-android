@@ -61,6 +61,7 @@ class WebdavService(
             )
         }
         val key = objectKey(file.name)
+        makeCollections(key)
         val putUrl = "$davBase/$key"
         val conn = open(putUrl, "PUT")
         conn.doOutput = true
@@ -80,6 +81,36 @@ class WebdavService(
             conn.disconnect()
         }
         return publicBase?.let { "$it/$key" } ?: putUrl
+    }
+
+    /** Collections already created (or found existing) this process, so a
+     *  busy session pays for each ancestor once. */
+    private val madeCollections = HashSet<String>()
+
+    /**
+     * MKCOL every directory above `key`, outermost first — mirrors
+     * `apps/a8s/services/webdav.py` upstream. WebDAV PUT does not create
+     * parent collections: a PUT into a directory that does not exist answers
+     * 409 Conflict, and every object key carries a fresh random directory,
+     * so that 409 is the normal case, not the rare one. 405 means the
+     * collection is already there.
+     */
+    private fun makeCollections(key: String) {
+        for (path in ancestorPaths(key)) {
+            if (path in madeCollections) continue
+            val conn = open("$davBase/$path", "MKCOL")
+            try {
+                val rc = conn.responseCode
+                if (rc !in 200..299 && rc != HTTP_METHOD_NOT_ALLOWED) {
+                    throw StorageException("webdav MKCOL responded $rc for $path")
+                }
+            } catch (e: IOException) {
+                throw StorageException("webdav MKCOL failed for $path: ${e.message}", e)
+            } finally {
+                conn.disconnect()
+            }
+            madeCollections.add(path)
+        }
     }
 
     /**
@@ -151,6 +182,20 @@ class WebdavService(
         const val MAX_FILE_BYTES: Long = 50L * 1024L * 1024L
         const val DEFAULT_PREFIX: String = "a8s"
         const val DEFAULT_TIMEOUT_S: Int = 60
+        private const val HTTP_METHOD_NOT_ALLOWED = 405
+
+        /** Every collection above `key`, outermost first: the paths MKCOL
+         *  must create, in the order it must create them. */
+        internal fun ancestorPaths(key: String): List<String> {
+            val parts = key.trim('/').split('/').dropLast(1).filter { it.isNotEmpty() }
+            val out = mutableListOf<String>()
+            var path = ""
+            for (part in parts) {
+                path = if (path.isEmpty()) part else "$path/$part"
+                out.add(path)
+            }
+            return out
+        }
 
         private val random = SecureRandom()
 
