@@ -31,20 +31,33 @@ object CmdHelpers {
      * cannot send bytes, so a URL is the delivery mechanism; when there is no
      * public URL, say that plainly rather than leaving a filename the reader
      * has no way to act on.
+     *
+     * A storage entry may also be a non-web machine reference (e.g. an
+     * `a8s+sync:` marker), meaningless to a human and worse when a voice
+     * assistant reads it aloud. Those are omitted from human-facing SMS
+     * unless [rawStorageRefs] (the `sms_raw_storage_refs` debug setting) is
+     * on; a file whose only references are non-web then contributes no
+     * line. Error lines (`ATTACHMENT UNAVAILABLE: …`) are unaffected.
      */
-    fun buildSendBody(text: String, files: List<EnvelopeFile>): String {
+    fun buildSendBody(text: String, files: List<EnvelopeFile>, rawStorageRefs: Boolean = false): String {
         val lines = mutableListOf<String>()
         for (f in files) {
             if (f.error != null) {
                 val why = f.detail.ifBlank { f.error }
                 lines += "$ATTACHMENT_FAILURE_PREFIX${f.filename}: $why"
-            } else {
+            } else if (rawStorageRefs) {
                 lines += f.storageUrls
+            } else {
+                lines += f.storageUrls.filter(::isHumanOpenableUrl)
             }
         }
         if (lines.isEmpty()) return text
         return text + "\n" + lines.joinToString("\n")
     }
+
+    /** Only web URLs make sense in SMS a human (or their voice assistant) reads. */
+    internal fun isHumanOpenableUrl(url: String): Boolean =
+        url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)
 
     /** Matches `ATTACHMENT_FAILURE_PREFIX` in `apps/a8s/definitions.py`. */
     const val ATTACHMENT_FAILURE_PREFIX = "ATTACHMENT UNAVAILABLE: "

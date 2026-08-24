@@ -136,6 +136,11 @@ The app is configured via a JSON file with the following schema:
   `<N> of <M> for <id>:`. Android submits each chunk as one multipart
   SMS so its carrier parts appear as one message bubble. Use
   `/config set sms_chunk_limit <characters>` to update it on-device.
+- **`settings.sms_raw_storage_refs`** — boolean, default `false`. An
+  attachment's storage entries can include both web URLs and machine-only
+  sync references. When `false`, SMS built for a human carries only http(s)
+  URLs, and a file whose only reference is non-web is omitted entirely.
+  Set `true` to include every storage reference verbatim, for debugging.
 
 ### Routing summary
 

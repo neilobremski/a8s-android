@@ -25,7 +25,7 @@ object MqttInboundHandler {
                             detail = fileSummary,
                         ),
                     )
-                    SmsCommandDelivery.forwardToSms(service, phoneResult.forward)
+                    SmsCommandDelivery.forwardToSms(service, phoneResult.forward, config)
                     return
                 }
                 is PhoneAgentRoute.Result.Denied -> {

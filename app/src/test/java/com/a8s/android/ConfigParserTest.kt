@@ -73,6 +73,31 @@ class ConfigParserTest {
     }
 
     @Test
+    fun `parse respects sms_raw_storage_refs setting`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "settings": {
+                "sms_raw_storage_refs": true
+              }
+            }
+            """.trimIndent(),
+        )
+        val cfg = ConfigParser.parse(json)
+        assertTrue(cfg.smsRawStorageRefs)
+    }
+
+    @Test
+    fun `parse defaults sms_raw_storage_refs to false when absent`() {
+        val cfg = TestFixtures.config()
+        assertFalse(cfg.smsRawStorageRefs)
+    }
+
+    @Test
     fun `parse clamps stored SMS chunk limit to minimum`() {
         val json = JSONObject(
             """

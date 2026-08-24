@@ -76,6 +76,64 @@ class CmdHelpersTest {
         assertFalse(result.contains("[+"))
     }
 
+    @Test
+    fun `buildSendBody default omits non-web storage markers`() {
+        val files = listOf(
+            EnvelopeFile("x.png", listOf("https://example.com/x.png", "a8s+sync:01ABC/x.png")),
+        )
+        val body = CmdHelpers.buildSendBody("here you go", files)
+        assertTrue(body.contains("https://example.com/x.png"))
+        assertFalse(body.contains("a8s+sync:"))
+    }
+
+    @Test
+    fun `buildSendBody rawStorageRefs true includes non-web markers`() {
+        val files = listOf(
+            EnvelopeFile("x.png", listOf("https://example.com/x.png", "a8s+sync:01ABC/x.png")),
+        )
+        val body = CmdHelpers.buildSendBody("here you go", files, rawStorageRefs = true)
+        assertTrue(body.contains("https://example.com/x.png"))
+        assertTrue(body.contains("a8s+sync:01ABC/x.png"))
+    }
+
+    @Test
+    fun `buildSendBody file with only a non-web marker contributes no line`() {
+        val files = listOf(EnvelopeFile("x.png", listOf("a8s+sync:01ABC/x.png")))
+        val body = CmdHelpers.buildSendBody("here you go", files)
+        assertEquals("here you go", body)
+    }
+
+    @Test
+    fun `buildSendBody error line renders regardless of rawStorageRefs`() {
+        val files = listOf(
+            EnvelopeFile(
+                "memo.m4a",
+                emptyList(),
+                error = ATTACHMENT_UNAVAILABLE,
+                detail = "no storage service configured",
+            ),
+        )
+        val defaultBody = CmdHelpers.buildSendBody("here it is", files)
+        val rawBody = CmdHelpers.buildSendBody("here it is", files, rawStorageRefs = true)
+        assertTrue(defaultBody.contains("ATTACHMENT UNAVAILABLE: memo.m4a"))
+        assertTrue(rawBody.contains("ATTACHMENT UNAVAILABLE: memo.m4a"))
+        assertEquals(defaultBody, rawBody)
+    }
+
+    @Test
+    fun `isHumanOpenableUrl accepts http and https case-insensitively`() {
+        assertTrue(CmdHelpers.isHumanOpenableUrl("https://example.com/x"))
+        assertTrue(CmdHelpers.isHumanOpenableUrl("http://example.com/x"))
+        assertTrue(CmdHelpers.isHumanOpenableUrl("HTTPS://example.com/x"))
+        assertTrue(CmdHelpers.isHumanOpenableUrl("HTTP://example.com/x"))
+    }
+
+    @Test
+    fun `isHumanOpenableUrl rejects non-web schemes`() {
+        assertFalse(CmdHelpers.isHumanOpenableUrl("a8s+sync:01ABC/x.png"))
+        assertFalse(CmdHelpers.isHumanOpenableUrl("ftp://example.com/x"))
+    }
+
     // ── /photo ────────────────────────────────────────────────────────────
 
     @Test
