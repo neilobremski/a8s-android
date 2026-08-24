@@ -27,25 +27,24 @@ object SmsCommandDelivery {
             )
             return
         }
-        val attributed = if (forward.from.isNotBlank()) "${forward.from}: ${forward.content}" else forward.content
         A8sAndroid.log(
             "MQTT ${forward.targetAgent} -> SMS ${PhoneNormalize.maskNumber(forward.smsToNumber)}: " +
                 "${service.preview(forward.content)} [+${forward.files.size} file(s)]",
         )
 
         Thread {
-            handleForwardToSmsThread(service, forward, txnId, maskedTo, attributed, config)
+            handleForwardToSmsThread(service, forward, config)
         }.start()
     }
 
     private fun handleForwardToSmsThread(
         service: A8sService,
         forward: PhoneAgentRoute.Forward,
-        txnId: String,
-        maskedTo: String,
-        attributed: String,
         config: A8sAndroid.Config,
     ) {
+        val txnId = forward.envelopeId
+        val maskedTo = TransactionTrace.maskTo(forward.smsToNumber)
+        val attributed = if (forward.from.isNotBlank()) "${forward.from}: ${forward.content}" else forward.content
         val allEnvelopeFiles = forward.files
         val fileDetail = summarizeForwardFiles(allEnvelopeFiles)
         val finalBody = CmdHelpers.buildSendBody(attributed, allEnvelopeFiles, config.smsRawStorageRefs)
