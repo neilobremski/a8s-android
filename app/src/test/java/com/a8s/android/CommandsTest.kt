@@ -51,27 +51,11 @@ class CommandsTest {
     }
 
     @Test
-    fun `unknown command lists known ones`() {
+    fun `unknown command does not advertise command catalog`() {
         val out = Commands.renderUnknown("bogus")
-        assertTrue(out.contains("/bogus"))
-        assertTrue(out.contains("/info"))
-        assertTrue(out.contains("/logs"))
-        assertTrue(out.contains("/update"))
-        assertTrue(out.contains("/screenshot"))
-        assertTrue(out.contains("/photo"))
-        assertTrue(out.contains("/video"))
-        assertTrue(out.contains("/location"))
-        assertTrue(out.contains("/say"))
-        assertTrue(out.contains("/notify"))
-        assertTrue(out.contains("/ls"))
-        assertTrue(out.contains("/cat"))
-        assertTrue(out.contains("/rm"))
-        assertTrue(out.contains("/tap"))
-        assertTrue(out.contains("/longtap"))
-        assertTrue(out.contains("/swipe"))
-        assertTrue(out.contains("/key"))
-        assertTrue(out.contains("/input"))
-        assertTrue(out.contains("/find"))
-        assertTrue(out.contains("/macro"))
+        assertEquals("unknown command: /bogus", out)
+        CmdHelpers.KNOWN_COMMANDS.forEach { command ->
+            assertTrue(!out.contains("/$command"), "leaked /$command")
+        }
     }
 }

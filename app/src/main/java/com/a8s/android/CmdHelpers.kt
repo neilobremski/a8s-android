@@ -293,7 +293,7 @@ object CmdHelpers {
         "info", "logs", "trace", "ls", "cat", "location", "nicknames"
     )
 
-    /** Single source of truth for the `known commands` listing. */
+    /** Command/handler parity list for tests; never include it in an error reply. */
     val KNOWN_COMMANDS: List<String> = listOf(
         "/info",
         "/logs [N]",

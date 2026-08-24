@@ -14,7 +14,6 @@ object SmsSlashCommand {
 
         data class Forbidden(
             val agent: String,
-            val replyNumber: String,
             val verb: String,
         ) : Result()
 
@@ -33,7 +32,7 @@ object SmsSlashCommand {
         val phone = principal.phone ?: return Result.NotForSms
         val (name, args) = parseSlashTokens(effectiveBody) ?: return Result.NotForSms
         if (!config.registry.allowsCommand(principal, name)) {
-            return Result.Forbidden(principal.agent, phone, name)
+            return Result.Forbidden(principal.agent, name)
         }
         return Result.Authorized(
             principal = principal,

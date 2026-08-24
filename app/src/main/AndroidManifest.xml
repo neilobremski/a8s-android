@@ -109,6 +109,11 @@
         </receiver>
 
         <receiver
+            android:name=".SmsStatusReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <receiver
             android:name=".SmsReceiver"
             android:enabled="true"
             android:exported="true"

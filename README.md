@@ -10,7 +10,7 @@ upstream cluster. It turns an Android phone into a messaging gateway agent that 
 - **Phone-agent SMS bridge:** MQTT to a phone-backed agent (e.g. `operator-phone`) forwards opaque SMS when `from` matches that principal's `allow_from` (or the list is absent/empty) — even `/logs` is not executed on the device.
 - **Explicit SMS sending:** `/send`, `/mms`, `/reply` — no implicit forwarding.
 - **SMS/RCS to MQTT:** Incoming SMS and intercepted RCS notifications publish back to the cluster.
-- **Media receive:** Extracts images/video from RCS notifications (3 strategies) and MMS via ContentObserver.
+- **Media receive:** Extracts image/video/audio from RCS notifications and MMS via ContentObserver.
 - **RCS reply actions:** Caches notification reply intents for `/reply` — enables RCS-capable responses without being the default SMS app.
 - **Persistent Connectivity:** Uses foreground services, wake locks, and wifi locks to stay online 24/7.
 - **Auto-update:** Checks GitHub Releases every 6 hours, auto-downloads newer APKs, prompts to install.
@@ -126,7 +126,10 @@ The app is configured via a JSON file with the following schema:
 - **`sms_throttle_s`** — non-negative delay between long-message chunks.
   Each chunk waits for every Android sent callback before the next chunk is
   submitted; each internal carrier part has a 30-second callback timeout.
-  The logical-message queue holds at most 100 entries.
+  Delivery reports are tracked separately without blocking the queue. A
+  positive report means the carrier reported delivery, while no report after
+  72 hours is logged as unconfirmed — never as failed, and never retried
+  automatically. The logical-message queue holds at most 100 entries.
 - **`settings.sms_truncate_limit`** — logical SMS chunk size in characters
   (default 1000, minimum 100). Longer output is split at word boundaries
   without breaking URLs, and each chunk is labeled
@@ -139,7 +142,7 @@ The app is configured via a JSON file with the following schema:
 | Path | Behavior |
 |------|----------|
 | MQTT `to: device`, `/verb`, authorized agent | Execute command on phone; reply MQTT |
-| MQTT `to: device`, non-command | Logged `NotACommand` (not forwarded) |
+| MQTT `to: device`, non-command | Logged and silently dropped (not forwarded) |
 | MQTT `to: <phone-agent>` | Opaque SMS if `from` is on target's `allow_from` (or list absent/empty) |
 | SMS `/verb` from phone principal | Execute on phone; reply SMS |
 | SMS plain text from phone principal | MQTT `from: <phone-agent>` → `routing.sms_inbound_agent` |
@@ -153,8 +156,9 @@ Responses come back as `tell <sender> "..."` over MQTT.
 
 SMS from a phone principal works the same for permitted verbs; replies
 go back over SMS. Senders not in `principals`, or without role
-permission, are dropped (SMS gets a short rejection for disallowed
-verbs).
+permission, are silently dropped and logged locally. An unknown command
+that the sender's role permits receives only `unknown command: /verb`;
+the command catalog is never included in an error reply.
 
 | Command | Description |
 |---|---|
@@ -195,7 +199,7 @@ verbs).
 | `/input <text>` | Type the rest of the line into the currently-focused input field via `ACTION_SET_TEXT`. Reports failure if no field is focused. |
 | `/find <label>` | Walk the active window's accessibility tree, find a node whose `text` or `contentDescription` contains `label` (case-insensitive), and click it. Reply attaches a screenshot. |
 | `/macro step1 \| step2 \| …` | Run a sequence of UI-automation steps with full evidence: a `before` screenshot, a screen recording of the run, an `after` screenshot, and a per-step status summary. Step verbs: `tap x y`, `longtap x y [ms]`, `swipe x1 y1 x2 y2 [ms]`, `key NAME`, `input <text>`, `find <label>`, `delay ms`. Pipes inside `input` text are not escapable — use `delay`-bracketed segments to keep the text on its own. |
-| `/<unknown>` | Replies with the list of known commands. |
+| `/<unknown>` | Replies with a one-line error and does not advertise the command catalog. |
 
 UI-automation commands (`/tap`, `/longtap`, `/swipe`, `/key`, `/input`,
 `/find`, `/macro`) require the **a8s Automation** accessibility service
@@ -229,14 +233,18 @@ SMS regardless of content.
 Incoming media is captured through two complementary paths:
 
 - **RCS (notification listener):** `SmsNotificationListener` intercepts
-  Google Messages notifications. `MediaExtractor` tries three strategies
+  Google Messages notifications. `MediaExtractor` tries four strategies
   in priority order:
   1. `MessagingStyle.dataUri` — content URI from the structured notification.
-  2. `BigPictureStyle` / `EXTRA_PICTURE_ICON` — bitmap from expanded notification.
-  3. `EXTRA_LARGE_ICON_BIG` — fallback for large inline thumbnails (> 128px).
+  2. `EXTRA_AUDIO_CONTENTS_URI` — semantic voice-message audio URI.
+  3. `BigPictureStyle` / `EXTRA_PICTURE_ICON` — bitmap from expanded notification.
+  4. `EXTRA_LARGE_ICON_BIG` — fallback for large inline thumbnails (> 128px).
 
   Extracted files are uploaded via the configured storage service and
-  attached to the outbound MQTT envelope.
+  attached to the outbound MQTT envelope. Media-only notifications are
+  accepted even when `EXTRA_TEXT` is empty. Google Messages does not promise
+  to expose RCS attachment bytes: a voice note can be forwarded only when the
+  notification contains a readable `content://` URI.
 
 - **MMS (ContentObserver):** `MmsObserver` watches `content://mms` for
   new inbox messages. After a 2-second settle delay it queries the MMS
@@ -246,6 +254,10 @@ Incoming media is captured through two complementary paths:
 
 Reply actions from RCS notifications are cached per phone number so
 `/reply` can fire them later without being the default SMS app.
+
+When every storage backend fails for inbound media, the MQTT envelope carries
+`ATTACHMENT_UNAVAILABLE` and the human receives one SMS explaining that the
+message was forwarded without a fetchable attachment.
 
 ## Auto-update
 

@@ -411,9 +411,7 @@ object Commands {
     fun parseTraceArgs(args: List<String>, default: Int = DEFAULT_LOGS_LINES): Int =
         parseLogsArgs(args, default)
 
-    fun renderUnknown(name: String): String =
-        "unknown command: /$name\n" +
-            "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
+    fun renderUnknown(name: String): String = "unknown command: /$name"
 
     /** "1.2 GB" / "512 MB" / "20 KB" / "100 B". 1024 base. */
     fun formatBytes(n: Long): String {

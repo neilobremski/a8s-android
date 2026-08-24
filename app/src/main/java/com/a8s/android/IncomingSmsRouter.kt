@@ -151,7 +151,6 @@ object IncomingSmsRouter {
                 "SMS command /${result.verb} from ${result.agent} " +
                     "(${PhoneNormalize.maskNumber(sender.number)}) rejected (not permitted)",
             )
-            service.sendSms(result.replyNumber, "'/${result.verb}' is not permitted over SMS.")
             true
         }
         SmsSlashCommand.Result.NotForSms -> false
@@ -180,6 +179,9 @@ object IncomingSmsRouter {
                 val filesArr = service.buildFilesArray(config, mediaFiles)
                 val outbound = OutboundSms(sender.principal.agent, toAgent, body, filesArr)
                 publishOne(service, config, outbound)
+                AttachmentFailureAlert.build(filesArr)?.let { alert ->
+                    service.sendSms(sender.number, alert)
+                }
                 mediaFiles.forEach { it.delete() }
             }.start()
         } else {
