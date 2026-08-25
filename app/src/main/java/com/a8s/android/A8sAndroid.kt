@@ -161,6 +161,7 @@ class A8sAndroid : Application() {
         val services: List<StorageService>,
         val smsThrottleMs: Long,
         val smsChunkLimit: Int,
+        val smsRawStorageRefs: Boolean = false,
     )
 
     override fun onCreate() {

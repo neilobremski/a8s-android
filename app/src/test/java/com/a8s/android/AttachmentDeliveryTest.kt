@@ -1,6 +1,7 @@
 package com.a8s.android
 
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -84,5 +85,30 @@ class AttachmentDeliveryTest {
         val files = parseEnvelopeFiles(json)
         assertNull(files[0].error)
         assertEquals(listOf("https://tempfile.org/abc/"), files[0].storageUrls)
+    }
+
+    @Test
+    fun `upload failure alert is sent once with failed filenames`() {
+        val files = JSONArray(
+            """[
+                {"filename":"memo.m4a","error":"ATTACHMENT_UNAVAILABLE"},
+                {"filename":"photo.jpg","storage":["https://files.example.com/photo.jpg"]},
+                {"filename":"notes.pdf","error":"ATTACHMENT_UNAVAILABLE"}
+            ]""".trimIndent(),
+        )
+
+        val alert = AttachmentFailureAlert.build(files)!!
+        assertTrue(alert.contains("memo.m4a, notes.pdf"))
+        assertTrue(alert.contains("forwarded with an unavailable-attachment notice"))
+        assertTrue(!alert.contains("photo.jpg"))
+    }
+
+    @Test
+    fun `upload failure alert is absent when every attachment has a public URL`() {
+        val files = JSONArray(
+            """[{"filename":"photo.jpg","storage":["https://files.example.com/photo.jpg"]}]""",
+        )
+
+        assertNull(AttachmentFailureAlert.build(files))
     }
 }

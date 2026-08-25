@@ -88,7 +88,7 @@ the PR will fail.
 | File | Role |
 |---|---|
 | `A8sAndroid.kt` | `Application` subclass. Owns the static `Config` (parsed from JSON), the in-app log ring (50 lines, surfaced to the UI via `onLogListener`), and `loadConfig`/`saveUri`/`getSavedUri` for SAF persistence. Triggers `requestBatteryOptimizationExclusion` on first launch. |
-| `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds one Paho v3 client per configured remote, wake/wifi locks, ingress coordinator, bounded logical SMS queue, `PublishRetryQueue`, the SMS-sent broadcast receiver, and the `MmsObserver`. Routes inbound MQTT via `decideRoute` and dispatches commands via the `asyncCommands` map. Manages auto-update checks (6-hour interval, GitHub Releases API). |
+| `A8sService.kt` | The brains. Foreground `LifecycleService` (type `connectedDevice`). Holds one Paho v3 client per configured remote, wake/wifi locks, ingress coordinator, bounded logical SMS queue, `PublishRetryQueue`, and the `MmsObserver`. Routes inbound MQTT via `decideRoute` and dispatches commands via the `asyncCommands` map. Sweeps expired SMS status reports and manages auto-update checks. |
 | `MainActivity.kt` | Tabbed UI (Dashboard / Logs / Setup). The Dashboard tab is a full-screen `WebView` driven by `Dashboard.kt` state. The Logs tab shows the live log ring. The Setup tab has permission grants, configuration loading, and the status panel. Requests dangerous perms via `RequestMultiplePermissions`. |
 | `SmsReceiver.kt` | `BroadcastReceiver` for `SMS_RECEIVED_ACTION`. Uses `Telephony.Sms.Intents.getMessagesFromIntent`. Forwards to `A8sService.publishIncoming`. |
 | `SmsNotificationListener.kt` | `NotificationListenerService` for `com.google.android.apps.messaging`. Pulls `EXTRA_TITLE` (contact display name) + `EXTRA_TEXT`. Extracts media via `MediaExtractor` (on a worker thread) and caches the notification's reply action for `/reply`. Forwards to `A8sService.publishIncoming` with optional file attachments. |
@@ -96,7 +96,7 @@ the PR will fail.
 | `MqttRoute.kt` | Sealed class + pure-Kotlin `decideRoute(payload, config)`. Handles MQTT **to device only** — agent auth + role gate. Variants: `Command` / `NotACommand` / `Drop` / `ParseError`. |
 | `PhoneAgentRoute.kt` | MQTT **to phone-backed agent** → opaque SMS forward when `from` passes target's `allow_from` (checked before `decideRoute` via `MqttInboundHandler`). |
 | `PrincipalConfig.kt` | `ConfigParser`, `PrincipalRegistry`, `RolePolicy`, `AllowFromMatcher` — strict JSON parse for `roles` + `principals` + `routing`. Pure Kotlin. |
-| `IncomingSmsRouter.kt` | SMS/RCS ingress: phone-principal match, SMS-originated slash commands, fall-through publish as phone agent. |
+| `IncomingSmsRouter.kt` | SMS/RCS ingress: phone-principal match, SMS-originated slash commands, fall-through publish as phone agent. Role-denied commands are logged and silently dropped. Inbound upload failures publish their error and trigger one sender-facing alert. |
 | `SmsSlashCommand.kt` | Classify inbound SMS bodies as authorized/forbidden/not-a-command using role policy. |
 | `SmsCommandDelivery.kt` | Phone-agent SMS forward + SMS reply body building (inline storage URLs). |
 | `CmdTell.kt` | `/tell <agent> <message>` — MQTT publish with phone principal as `from`. Disconnected queues are silent; terminal failure is reported only after every configured remote exhausts retries. |
@@ -106,7 +106,9 @@ the PR will fail.
 | `InfoSnapshotter.kt` | Android-side gatherer for `/info`. `capture(context, config, verbose)` builds `InfoSnapshot` (~150 fields in verbose mode). Field catalogue in `INFO_FIELD_RESEARCH.md`. |
 | `IngressCoordinator.kt` | Source-event ingress dedup/coalescing before command execution or MQTT publish. Holds observations 2.5s, merges equivalent SMS/MMS/notification events, preserves richer media/reply metadata, and persists bounded SHA-256 event identities for 48h without message plaintext. |
 | `SmsSegmenter.kt` | Splits output above the configured character limit (default 1000) into word/URL-safe logical chunks labeled `<N> of <M> for <id>:`. Each chunk is then passed whole to `SmsManager.sendMultipartTextMessage`, so Android reassembles its carrier parts into one message bubble. |
-| `SmsChunkSender.kt` | Submits one logical SMS chunk through `sendMultipartTextMessage` (or `sendTextMessage` for one carrier part), correlates every sent-result callback, and blocks the SMS worker until all carrier parts succeed or time out. |
+| `SmsChunkSender.kt` | Submits one logical SMS chunk through `sendMultipartTextMessage` (or `sendTextMessage` for one carrier part), correlates every sent-result callback, and blocks the SMS worker until all carrier parts succeed or time out. Supplies a separate mutable delivery intent per carrier part without waiting on it. |
+| `SmsStatusReceiver.kt` / `SmsStatusStore.kt` | Manifest receiver + body-free SharedPreferences correlation for sent and delivery callbacks. Survives ordinary process death, decodes carrier status PDUs, retains temporary reports, and expires missing reports to unknown without resending. |
+| `SmsDeliveryStatus.kt` | Pure GSM/3GPP and CDMA/3GPP2 delivery-status classifier. Temporary carrier statuses remain pending; final positive/negative ranges are unit-tested. |
 | `SmsMessageIds.kt` | Persistent monotonic integer sequence for long-SMS message headers. IDs survive service and app restarts; only split messages expose the ID in their text. |
 | `IngressStaleness.kt` | Drops ingress events older than 6h (RCS notification message time) or 48h (SMS/MMS PDU date). |
 | `NotificationIngress.kt` | Reads MessagingStyle message timestamps for RCS staleness (preferred over notification post time). |
@@ -121,7 +123,8 @@ the PR will fail.
 | `Ulid.kt` | Crockford-base32 ULID generator matching Python `apps/a8s/ulid.py`. Pure stdlib (`SecureRandom` + `BigInteger`). Required for `id` field on every outbound MQTT envelope so the host's `_process_pending` dedup ring accepts it. |
 | `Updater.kt` | `/update` plumbing — fetches GitHub Releases JSON, picks the `a8s-android-*-debug.apk` asset, downloads it, and `compareVersions` to decide if newer. The actual install kicks off via `ACTION_VIEW` + FileProvider in `A8sService.triggerInstallPrompt`. JSON parsing + version compare are unit-tested; HTTP and FileProvider sit in thin Android-only wrappers. |
 | `Screenshot.kt` | `/screenshot` plumbing — `MediaProjection` + `ImageReader` + `VirtualDisplay` to grab one frame, write as PNG. The user grants projection consent once via the **Enable Screen Capture** button in MainActivity; the `(resultCode, Intent)` pair is held in the service for the lifetime of the process. Each `/screenshot` builds a fresh `MediaProjection` from the cached consent, captures + releases to keep the OS's media-projection notification quiet between shots. **Consent is in-memory only and lost on process restart** (e.g. after `/update` reinstalls the app). The "Grant All Permissions" button in MainActivity re-fires the projection-consent dialog so it's bundled into one tap with the other dangerous-perm grants. |
-| `CmdHelpers.kt` | Pure-Kotlin parsing + formatters for device commands. `KNOWN_COMMANDS` is the single source of truth for the `unknown command` listing. `buildSendBody` appends envelope-file storage URLs to SMS text (1600-char budget), or an `ATTACHMENT UNAVAILABLE: <name>: <why>` line when an entry carries an error. Unit-tested in `CmdHelpersTest`. |
+| `CmdHelpers.kt` | Pure-Kotlin parsing + formatters for device commands. `KNOWN_COMMANDS` pins handler/catalog parity in tests but is never sent in an error reply. `buildSendBody` appends envelope-file storage URLs to SMS text (1600-char budget), or an `ATTACHMENT UNAVAILABLE: <name>: <why>` line when an entry carries an error; by default only http(s) URLs are appended (non-web machine references are omitted), unless the `sms_raw_storage_refs` setting is on. Unit-tested in `CmdHelpersTest`. |
+| `AttachmentFailureAlert.kt` | Builds one bounded sender-facing SMS when inbound media has no public upload URL. Filenames are whitespace-normalized and capped; backend error details stay in local logs/the envelope. |
 | `FileDownloader.kt` | Pure-Kotlin helper: given `List<EnvelopeFile>` + storage services, downloads to a dest dir. Per URL it tries each configured service, then falls back to a plain https GET via `HttpGet`, so a sender can add a storage backend without receivers being reconfigured. Destination names go through `AttachmentPath`. The https fetch is injected (`HttpFetch`) so unit tests never touch the network. `buildSmsBody` merges fallback URLs for failed downloads. `/send` still appends URLs inline via `buildSendBody` rather than downloading first. |
 | `WebdavService.kt` | WebDAV backend, and the preferred one: storage the operator controls, no third-party expiry, and the host an ISP is least likely to block. Config `webdav://host/path` maps to HTTPS for the PUT. `base_url` is optional and is what makes an upload useful — the DAV endpoint needs credentials, so only a `base_url` gives a recipient a bare GET. Without one, `producesPublicUrl` is false. |
 | `HttpGet.kt` | The one downloader. https only, at most 3 redirects with the scheme re-checked at every hop, and a 50 MiB cap checked against `Content-Length` and again while streaming. Writes through a `.part` sibling so a partial transfer never looks complete. Mirrors `apps/a8s/services/http_get.py` upstream. `/mms`, `/download` and `/dashboard` all route through it. |
@@ -130,7 +133,7 @@ the PR will fail.
 | `CmdReply.kt` | `/reply <number> <text>` — fires the cached notification reply action intent for the given phone number (RCS-capable). Lists cached numbers on mismatch. |
 | `CmdDownload.kt` | `/download <url> [filename]` — downloads a file to `/sdcard/Download`. Tries configured storage services first, then `HttpGet`. |
 | `CmdDashboard.kt` | `/dashboard bg <url> \| content <html> \| clear` — controls the Dashboard tab state. Downloads background images via storage services, then `HttpGet`. |
-| `MediaExtractor.kt` | Notification media extraction. Three strategies in priority order: `MessagingStyle.dataUri`, `BigPictureStyle`/`EXTRA_PICTURE_ICON`, `EXTRA_LARGE_ICON_BIG`. `mimeTypeToExtension` maps MIME types to file extensions. |
+| `MediaExtractor.kt` | Notification media extraction. Four strategies in priority order: `MessagingStyle.dataUri`, `EXTRA_AUDIO_CONTENTS_URI`, `BigPictureStyle`/`EXTRA_PICTURE_ICON`, `EXTRA_LARGE_ICON_BIG`. URI copies accept `content://` only, cap at 50 MiB, and never log full URIs. |
 | `MmsObserver.kt` | `ContentObserver` on `content://mms`. Watches for new inbox MMS messages, extracts text and media parts from the telephony content provider, and publishes them via `A8sService.publishIncoming`. |
 | `Dashboard.kt` | State manager for the Dashboard tab. Persists HTML content to `dashboard.html` in `filesDir` and background image path in SharedPreferences. Notifies `MainActivity` of updates via `onUpdate` callback. |
 | `CmdPhoto.kt` | `/photo [front\|back]` — Camera2 still capture on a per-call HandlerThread. Saves JPEG to `cacheDir/photos/photo-<ts>.jpg`, replies via `replyToSender(... files=...)`. |
@@ -229,7 +232,10 @@ Pure function order (`decideRoute`):
    - **Agent gate.** `from` must be a configured principal.
    - **Role gate.** Principal's roles must permit the verb.
    - **Slash command.** `content.startsWith("/")` → `Command`.
-   - **Not a command.** Else → `NotACommand` (logged, not forwarded).
+   - **Not a command.** Else → `NotACommand` (logged, no reply, not forwarded).
+
+Role-denied MQTT and SMS commands are silent. Authorized unknown commands get
+only `unknown command: /verb`; error replies never contain `KNOWN_COMMANDS`.
 
 ## Configuration JSON (`a8s.json`)
 
@@ -308,6 +314,10 @@ credential-gated, so only `base_url` gives a recipient a bare GET. Without
 one, `producesPublicUrl` is false and the attachment is published as
 `error: ATTACHMENT_UNAVAILABLE` rather than as a URL nobody can use. A
 plaintext `base_url` is rejected at parse time.
+
+For inbound SMS/RCS/MMS media, the same error is published to the recipient
+and `AttachmentFailureAlert` sends one short notice to the phone principal so
+the human knows to fix storage/network and retry.
 
 - The user picks the file via Storage Access Framework; the URI is
   persisted (`takePersistableUriPermission`) so reloads work post-reboot.

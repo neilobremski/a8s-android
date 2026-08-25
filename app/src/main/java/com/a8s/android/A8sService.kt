@@ -4,10 +4,8 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -37,18 +35,18 @@ class A8sService : LifecycleService() {
     companion object {
         private const val CHANNEL_ID = "a8s_android_channel"
         private const val NOTIF_ID = 1001
-        const val SMS_SENT_ACTION = "com.a8s.android.SMS_SENT"
         private const val UPDATE_CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
         private const val UPDATE_CHECK_INITIAL_DELAY_MS = 60L * 1000
         private const val SMS_QUEUE_CAPACITY = 100
         private const val DEFAULT_SMS_THROTTLE_MS = 10_000L
+        private const val SMS_STATUS_SWEEP_INTERVAL_MS = 60L * 60L * 1000L
 
         var instance: A8sService? = null
             private set
     }
 
     private val smsChunkSender by lazy { SmsChunkSender(this) }
-    private var sentResultReceiver: BroadcastReceiver? = null
+    private val smsStatusStore by lazy { SmsStatusStore(this) }
 
     // One paho client per configured remote, keyed by remote name. The
     // map is mutated only on the main thread (`connectAll`/`onDestroy`),
@@ -78,6 +76,12 @@ class A8sService : LifecycleService() {
     private var serviceStartMs: Long = 0L
     private var mmsObserver: MmsObserver? = null
     private val updateCheckRunnable = Runnable { checkForUpdate() }
+    private val smsStatusSweepRunnable = object : Runnable {
+        override fun run() {
+            sweepSmsStatuses()
+            handler.postDelayed(this, SMS_STATUS_SWEEP_INTERVAL_MS)
+        }
+    }
 
     // Cached MediaProjection consent. Set by MainActivity after the user
     // grants screen capture; held until the service dies. We store the
@@ -117,7 +121,7 @@ class A8sService : LifecycleService() {
         wifiLock.acquire()
 
         registerNetworkCallback()
-        registerSentResultReceiver()
+        smsStatusSweepRunnable.run()
         retryQueue.publishFn = { topic, payload ->
             tryPublishToAnyConnected(topic, payload)
         }
@@ -180,49 +184,30 @@ class A8sService : LifecycleService() {
         }.start()
     }
 
-    private fun registerSentResultReceiver() {
-        if (sentResultReceiver != null) return
-        val r = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                val rc = resultCode
-                val recipient = intent?.getStringExtra("recipient") ?: "?"
-                val part = intent?.getIntExtra("part", -1) ?: -1
-                val of = intent?.getIntExtra("of", -1) ?: -1
-                val requestId = intent?.getIntExtra("request_id", -1) ?: -1
-                val verdict = when (rc) {
-                    android.app.Activity.RESULT_OK -> "OK"
-                    android.telephony.SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "GENERIC_FAILURE"
-                    android.telephony.SmsManager.RESULT_ERROR_NO_SERVICE -> "NO_SERVICE"
-                    android.telephony.SmsManager.RESULT_ERROR_NULL_PDU -> "NULL_PDU"
-                    android.telephony.SmsManager.RESULT_ERROR_RADIO_OFF -> "RADIO_OFF"
-                    else -> "rc=$rc"
-                }
-                A8sAndroid.log("SMS send result $verdict to $recipient (part ${part + 1}/$of)")
-                smsChunkSender.complete(requestId, rc)
-            }
+    private fun sweepSmsStatuses() {
+        smsStatusStore.expire().forEach { record ->
+            val kind = if (record.kind == SmsCallbackKind.SENT) "submission" else "delivery"
+            val pending = record.lastProtocolStatus?.let { "; last carrier status was temporary" }.orEmpty()
+            A8sAndroid.log(
+                "SMS $kind unconfirmed for message ${record.part.messageId} " +
+                    "to ${record.part.maskedRecipient}$pending",
+            )
         }
-        val filter = IntentFilter(SMS_SENT_ACTION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(r, filter)
-        }
-        sentResultReceiver = r
+    }
+
+    internal fun completeSmsSent(requestId: Int, resultCode: Int) {
+        smsChunkSender.complete(requestId, resultCode)
     }
 
     override fun onDestroy() {
         A8sAndroid.log("Service stopping")
         instance = null
         handler.removeCallbacks(updateCheckRunnable)
+        handler.removeCallbacks(smsStatusSweepRunnable)
         mmsObserver?.unregister()
         mmsObserver = null
         retryQueue.clear()
         tellRetryTracker.clear()
-        sentResultReceiver?.let {
-            try { unregisterReceiver(it) } catch (_: Exception) { }
-        }
-        sentResultReceiver = null
         smsSenderThread?.interrupt()
         smsChunkSender.clear()
         mqttClients.values.forEach { c ->
@@ -654,10 +639,14 @@ class A8sService : LifecycleService() {
 
     internal fun sendSms(to: String, body: String) {
         val sms = OutboundSms(SmsMessageIds.next(this), to, body)
+        val maskedTo = PhoneNormalize.maskNumber(to)
         if (outboundSmsQueue.offer(sms)) {
-            A8sAndroid.log("SMS logical message ${sms.id} queued for $to (depth ${outboundSmsQueue.size}/$SMS_QUEUE_CAPACITY)")
+            A8sAndroid.log(
+                "SMS logical message ${sms.id} queued for $maskedTo " +
+                    "(depth ${outboundSmsQueue.size}/$SMS_QUEUE_CAPACITY)",
+            )
         } else {
-            A8sAndroid.log("SMS queue full; rejected logical message ${sms.id} to $to")
+            A8sAndroid.log("SMS queue full; rejected logical message ${sms.id} to $maskedTo")
         }
     }
 
@@ -687,7 +676,7 @@ class A8sService : LifecycleService() {
                 }
             }
             A8sAndroid.log(
-                "SMS message ${sms.id} submitted to ${sms.to} " +
+                "SMS message ${sms.id} submitted to ${PhoneNormalize.maskNumber(sms.to)} " +
                     "(${chunks.size} logical chunk(s), $carrierPartCount carrier part(s))",
             )
         } catch (_: InterruptedException) {

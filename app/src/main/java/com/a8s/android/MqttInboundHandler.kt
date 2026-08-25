@@ -25,7 +25,7 @@ object MqttInboundHandler {
                             detail = fileSummary,
                         ),
                     )
-                    SmsCommandDelivery.forwardToSms(service, phoneResult.forward)
+                    SmsCommandDelivery.forwardToSms(service, phoneResult.forward, config)
                     return
                 }
                 is PhoneAgentRoute.Result.Denied -> {
@@ -39,10 +39,8 @@ object MqttInboundHandler {
         }
         when (val route = decideRoute(json, config)) {
             is MqttRoute.NotACommand -> {
+                A8sAndroid.log("MQTT -> drop (not a slash command from ${route.sender})")
                 recordDrop(txnId, from, to, "not a slash command", fileSummary)
-                val reply = "error: message must start with a /command\n" +
-                    "known: " + CmdHelpers.KNOWN_COMMANDS.joinToString(", ")
-                service.publishToSender(config, route.sender, reply)
             }
             is MqttRoute.Command -> {
                 recordCommand(txnId, from, to, route)

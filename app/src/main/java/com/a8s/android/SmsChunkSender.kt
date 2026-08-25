@@ -3,23 +3,24 @@ package com.a8s.android
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.telephony.SmsManager
-import java.security.SecureRandom
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 /** Submits one logical chunk as multipart SMS and awaits every carrier callback. */
 class SmsChunkSender(private val context: Context) {
     private data class PendingResult(
         val requestId: Int,
         val sentIntent: PendingIntent,
+        val deliveryRequestId: Int,
+        val deliveryIntent: PendingIntent,
         val result: ArrayBlockingQueue<Int>,
     )
 
-    private val requestSequence = AtomicInteger(SecureRandom().nextInt())
     private val results = ConcurrentHashMap<Int, ArrayBlockingQueue<Int>>()
+    private val statusStore = SmsStatusStore(context.applicationContext)
 
     fun complete(requestId: Int, resultCode: Int) {
         results.remove(requestId)?.offer(resultCode)
@@ -43,18 +44,27 @@ class SmsChunkSender(private val context: Context) {
         }
         try {
             if (carrierParts.size == 1) {
-                smsManager.sendTextMessage(to, null, carrierParts.single(), pending.single().sentIntent, null)
+                smsManager.sendTextMessage(
+                    to,
+                    null,
+                    carrierParts.single(),
+                    pending.single().sentIntent,
+                    pending.single().deliveryIntent,
+                )
             } else {
                 smsManager.sendMultipartTextMessage(
                     to,
                     null,
                     carrierParts,
                     ArrayList(pending.map { it.sentIntent }),
-                    null,
+                    ArrayList(pending.map { it.deliveryIntent }),
                 )
             }
         } catch (error: Exception) {
-            pending.forEach { results.remove(it.requestId) }
+            pending.forEach {
+                results.remove(it.requestId)
+                statusStore.remove(it.requestId, it.deliveryRequestId)
+            }
             throw error
         }
         for (item in pending) {
@@ -79,26 +89,40 @@ class SmsChunkSender(private val context: Context) {
         carrierIndex: Int,
         carrierCount: Int,
     ): PendingResult {
-        val requestId = requestSequence.incrementAndGet()
-        val intent = Intent(A8sService.SMS_SENT_ACTION).apply {
-            setPackage(context.packageName)
-            putExtra("recipient", to)
-            putExtra("part", carrierIndex)
-            putExtra("of", carrierCount)
-            putExtra("message_id", messageId)
-            putExtra("chunk", chunkIndex)
-            putExtra("chunks", chunkCount)
-            putExtra("request_id", requestId)
-        }
-        val result = ArrayBlockingQueue<Int>(1)
-        results[requestId] = result
-        val sentIntent = PendingIntent.getBroadcast(
-            context,
-            requestId,
-            intent,
-            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
+        val ids = statusStore.registerPair(
+            SmsPartRef(
+                messageId = messageId,
+                chunkIndex = chunkIndex,
+                chunkCount = chunkCount,
+                partIndex = carrierIndex,
+                partCount = carrierCount,
+                maskedRecipient = PhoneNormalize.maskNumber(to),
+            ),
         )
-        return PendingResult(requestId, sentIntent, result)
+        val result = ArrayBlockingQueue<Int>(1)
+        results[ids.sent] = result
+        return try {
+            val sentIntent = callbackIntent(SmsStatusReceiver.ACTION_SENT, ids.sent, oneShot = true)
+            val deliveryIntent = callbackIntent(SmsStatusReceiver.ACTION_DELIVERY, ids.delivery, oneShot = false)
+            PendingResult(ids.sent, sentIntent, ids.delivery, deliveryIntent, result)
+        } catch (error: Exception) {
+            results.remove(ids.sent)
+            statusStore.remove(ids.sent, ids.delivery)
+            throw error
+        }
+    }
+
+    private fun callbackIntent(action: String, requestId: Int, oneShot: Boolean): PendingIntent {
+        val intent = Intent(context, SmsStatusReceiver::class.java).apply {
+            this.action = action
+            data = Uri.Builder()
+                .scheme("a8s-sms")
+                .authority("callback")
+                .appendPath(requestId.toString())
+                .build()
+        }
+        val flags = PendingIntent.FLAG_MUTABLE or if (oneShot) PendingIntent.FLAG_ONE_SHOT else 0
+        return PendingIntent.getBroadcast(context, requestId, intent, flags)
     }
 
     companion object {

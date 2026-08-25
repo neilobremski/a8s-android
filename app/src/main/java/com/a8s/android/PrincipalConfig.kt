@@ -127,7 +127,7 @@ object ConfigParser {
     private val ROOT_ALLOWED = setOf("device", "roles", "principals", "remotes", "services", "sms_throttle_s", "settings")
     private val ROLE_ALLOWED = setOf("commands")
     private val PRINCIPAL_ALLOWED = setOf("agent", "phone", "roles", "allow_from")
-    private val SETTINGS_ALLOWED = setOf("sms_truncate_limit")
+    private val SETTINGS_ALLOWED = setOf("sms_truncate_limit", "sms_raw_storage_refs")
 
     fun parse(root: JSONObject): A8sAndroid.Config {
         rejectUnknownKeys(root, ROOT_ALLOWED)
@@ -168,15 +168,17 @@ object ConfigParser {
 
         val settings = root.optJSONObject("settings")
         var smsChunkLimit = SmsSegmenter.DEFAULT_CHUNK_CHARS
+        var smsRawStorageRefs = false
         if (settings != null) {
             rejectUnknownKeys(settings, SETTINGS_ALLOWED)
             if (settings.has("sms_truncate_limit")) {
                 smsChunkLimit = settings.getInt("sms_truncate_limit")
                     .coerceAtLeast(SmsSegmenter.MIN_CHUNK_CHARS)
             }
+            smsRawStorageRefs = settings.optBoolean("sms_raw_storage_refs", false)
         }
 
-        return A8sAndroid.Config(device, registry, remotes, services, smsThrottleMs, smsChunkLimit)
+        return A8sAndroid.Config(device, registry, remotes, services, smsThrottleMs, smsChunkLimit, smsRawStorageRefs)
     }
 
     private fun parseRoles(obj: JSONObject): Map<String, RoleSpec> {

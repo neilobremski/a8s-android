@@ -7,7 +7,7 @@ import java.io.File
 /** SMS delivery for phone-agent forwards and SMS-originated command replies. */
 object SmsCommandDelivery {
 
-    fun forwardToSms(service: A8sService, forward: PhoneAgentRoute.Forward) {
+    fun forwardToSms(service: A8sService, forward: PhoneAgentRoute.Forward, config: A8sAndroid.Config) {
         val txnId = forward.envelopeId
         val maskedTo = TransactionTrace.maskTo(forward.smsToNumber)
         if (!gatePhoneAgentForward(service, forward.envelopeId, forward.targetAgent, forward.content)) {
@@ -27,27 +27,27 @@ object SmsCommandDelivery {
             )
             return
         }
-        val attributed = if (forward.from.isNotBlank()) "${forward.from}: ${forward.content}" else forward.content
         A8sAndroid.log(
             "MQTT ${forward.targetAgent} -> SMS ${PhoneNormalize.maskNumber(forward.smsToNumber)}: " +
                 "${service.preview(forward.content)} [+${forward.files.size} file(s)]",
         )
 
         Thread {
-            handleForwardToSmsThread(service, forward, txnId, maskedTo, attributed)
+            handleForwardToSmsThread(service, forward, config)
         }.start()
     }
 
     private fun handleForwardToSmsThread(
         service: A8sService,
         forward: PhoneAgentRoute.Forward,
-        txnId: String,
-        maskedTo: String,
-        attributed: String,
+        config: A8sAndroid.Config,
     ) {
+        val txnId = forward.envelopeId
+        val maskedTo = TransactionTrace.maskTo(forward.smsToNumber)
+        val attributed = if (forward.from.isNotBlank()) "${forward.from}: ${forward.content}" else forward.content
         val allEnvelopeFiles = forward.files
         val fileDetail = summarizeForwardFiles(allEnvelopeFiles)
-        val finalBody = CmdHelpers.buildSendBody(attributed, allEnvelopeFiles)
+        val finalBody = CmdHelpers.buildSendBody(attributed, allEnvelopeFiles, config.smsRawStorageRefs)
         service.sendSms(forward.smsToNumber, finalBody)
 
         if (allEnvelopeFiles.isEmpty()) {
@@ -113,7 +113,7 @@ object SmsCommandDelivery {
             emptyList()
         }
         val allEnvelopeFiles = existingEnvelopeFiles + uploadedEnvelopeFiles
-        return CmdHelpers.buildSendBody(text, allEnvelopeFiles)
+        return CmdHelpers.buildSendBody(text, allEnvelopeFiles, config.smsRawStorageRefs)
     }
 
     private fun envelopeFilesFromJSONArray(arr: JSONArray): List<EnvelopeFile> {
