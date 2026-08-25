@@ -16,29 +16,70 @@ object IncomingSmsRouter {
     private const val TELL_PREFS = "a8s_tell"
     private const val PINNED_AT_SUFFIX = ":pinnedAt"
 
+    // Every pin read-then-write happens under this lock so an inbound
+    // forward's conditional re-pin can never clobber a newer explicit
+    // tell/fall-through write it did not see.
+    private val pinLock = Any()
+
     fun setLastTellTarget(context: android.content.Context, senderAgent: String, targetAgent: String) {
-        val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
-        prefs.edit()
-            .putString(senderAgent, targetAgent)
-            .putLong(senderAgent + PINNED_AT_SUFFIX, System.currentTimeMillis())
-            .apply()
+        synchronized(pinLock) {
+            val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString(senderAgent, targetAgent)
+                .putLong(senderAgent + PINNED_AT_SUFFIX, System.currentTimeMillis())
+                .apply()
+        }
     }
 
     internal fun getLastTellTarget(context: android.content.Context, senderAgent: String): String? {
-        val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
-        return prefs.getString(senderAgent, null)
+        synchronized(pinLock) {
+            val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
+            return prefs.getString(senderAgent, null)
+        }
     }
 
     /**
-     * Age of the current pin for [senderAgent], in ms since epoch. A pin
-     * written before this timestamp existed (upgrade from an older version)
-     * decodes as pinned right now — fresh, not stale — until the next set or
-     * refresh persists a real value.
+     * Bump the pin's timestamp only while it still points at
+     * [expectedTarget] — a fall-through send refreshes the conversation it
+     * actually joined, never one that superseded it mid-flight.
      */
-    internal fun getLastTellPinnedAtMs(context: android.content.Context, senderAgent: String): Long {
-        val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
-        val key = senderAgent + PINNED_AT_SUFFIX
-        return if (prefs.contains(key)) prefs.getLong(key, System.currentTimeMillis()) else System.currentTimeMillis()
+    internal fun refreshPin(context: android.content.Context, senderAgent: String, expectedTarget: String) {
+        synchronized(pinLock) {
+            val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
+            if (prefs.getString(senderAgent, null) == expectedTarget) {
+                prefs.edit().putLong(senderAgent + PINNED_AT_SUFFIX, System.currentTimeMillis()).apply()
+            }
+        }
+    }
+
+    /**
+     * Atomic inbound re-pin: read the pin, decide, and mutate inside one
+     * critical section. A legacy pin with no timestamp is stamped now and
+     * kept — one full TTL window from first observation, then it ages
+     * normally (see [StickyPin.Decision.STAMP_AND_KEEP]).
+     */
+    internal fun repinIfStale(
+        context: android.content.Context,
+        senderAgent: String,
+        candidate: String,
+        ttlMs: Long,
+    ): StickyPin.Decision {
+        synchronized(pinLock) {
+            val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
+            val key = senderAgent + PINNED_AT_SUFFIX
+            val target = prefs.getString(senderAgent, null)
+            val pinnedAt = if (prefs.contains(key)) prefs.getLong(key, 0L) else null
+            val now = System.currentTimeMillis()
+            val decision = StickyPin.decide(target, pinnedAt, now, ttlMs)
+            when (decision) {
+                StickyPin.Decision.PIN_FIRST, StickyPin.Decision.REPIN ->
+                    prefs.edit().putString(senderAgent, candidate).putLong(key, now).apply()
+                StickyPin.Decision.STAMP_AND_KEEP ->
+                    prefs.edit().putLong(key, now).apply()
+                StickyPin.Decision.KEEP -> Unit
+            }
+            return decision
+        }
     }
 
     private data class ResolvedSender(val number: String, val principal: Principal)
@@ -215,7 +256,7 @@ object IncomingSmsRouter {
             mediaFiles.forEach { it.delete() }
             return
         }
-        setLastTellTarget(service, sender.principal.agent, toAgent)
+        refreshPin(service, sender.principal.agent, toAgent)
         if (mediaFiles.isNotEmpty()) {
             Thread {
                 val filesArr = service.buildFilesArray(config, mediaFiles)
