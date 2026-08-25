@@ -141,6 +141,12 @@ The app is configured via a JSON file with the following schema:
   sync references. When `false`, SMS built for a human carries only http(s)
   URLs, and a file whose only reference is non-web is omitted entirely.
   Set `true` to include every storage reference verbatim, for debugging.
+- **`settings.sms_sticky_ttl_s`** — freshness window in seconds for the
+  sticky plain-text SMS target (default 1800, i.e. 30 minutes; `0` disables
+  expiry so the pin never goes stale). An explicit `tell`/`hey`/`ok` sets the
+  pin and a successful plain-text fall-through refreshes it; an inbound
+  agent message only steals the pin from its previous target once that pin
+  has gone stale.
 
 ### Routing summary
 
@@ -150,8 +156,17 @@ The app is configured via a JSON file with the following schema:
 | MQTT `to: device`, non-command | Logged and silently dropped (not forwarded) |
 | MQTT `to: <phone-agent>` | Opaque SMS if `from` is on target's `allow_from` (or list absent/empty) |
 | SMS `/verb` from phone principal | Execute on phone; reply SMS |
-| SMS plain text from phone principal | MQTT `from: <phone-agent>` → `routing.sms_inbound_agent` |
-| SMS `/tell` from phone principal | MQTT envelope with `from: <phone-agent>` |
+| SMS plain text from phone principal | MQTT `from: <phone-agent>` → the sticky target (see below) |
+| SMS `tell`/`hey`/`ok`/`okay <agent> ...` from phone principal | MQTT envelope with `from: <phone-agent>`; sets the sticky target |
+
+Plain SMS from a phone principal routes to whichever agent it is currently
+"sticky" on — the target of the phone principal's last explicit
+`tell`/`hey`/`ok`/`okay`, refreshed by each successful plain-text send. `hey
+<agent> ...` and `ok`/`okay <agent> ...` route exactly like `tell <agent>
+...`, except when the word after the prefix is not a known agent name or
+nickname — then the message is treated as plain text instead of a command
+(`ok thanks` is never mistaken for a routing command). No such target yet?
+The phone gets a one-line SMS back explaining how to set one.
 
 ### Slash commands (device + SMS)
 
@@ -167,7 +182,7 @@ the command catalog is never included in an error reply.
 
 | Command | Description |
 |---|---|
-| `/tell <agent-or-nickname> <message>` | Publish an a8s envelope over MQTT. The verb is case-insensitive and surrounding punctuation on a spoken target is ignored. Multiword nicknames use exact longest-leading-phrase matching; canonical first-token names take precedence. There is no fuzzy matching. SMS-originated `/tell` uses the phone principal as `from`. Disconnected publishes retry silently; SMS reports a failure only if all configured remotes exhaust 10 attempts. |
+| `/tell <agent-or-nickname> <message>` | Publish an a8s envelope over MQTT. The verb is case-insensitive and surrounding punctuation on a spoken target is ignored. Multiword nicknames use exact longest-leading-phrase matching; canonical first-token names take precedence. There is no fuzzy matching. SMS-originated `/tell` uses the phone principal as `from`. Disconnected publishes retry silently; SMS reports a failure only if all configured remotes exhaust 10 attempts. From SMS, `hey <agent> <message>` and `ok`/`okay <agent> <message>` are equivalent — unlike `/tell`, an unrecognized agent name falls through to plain text instead of a usage error. |
 | `/nicknames add <nickname words> for <agent>` | Add a case-insensitive spoken nickname. Surrounding punctuation and repeated whitespace normalize away. A nickname cannot shadow a known canonical device/principal name. Existing mappings require `replace` instead of `add`. |
 | `/nicknames replace <nickname words> for <agent>` | Explicitly replace an existing nickname mapping. |
 | `/nicknames remove <nickname words>` | Remove a nickname mapping. |

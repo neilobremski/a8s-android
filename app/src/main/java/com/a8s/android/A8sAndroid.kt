@@ -162,6 +162,7 @@ class A8sAndroid : Application() {
         val smsThrottleMs: Long,
         val smsChunkLimit: Int,
         val smsRawStorageRefs: Boolean = false,
+        val smsStickyTtlMs: Long = 1800L * 1000L,
     )
 
     override fun onCreate() {

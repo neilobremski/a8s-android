@@ -127,7 +127,8 @@ object ConfigParser {
     private val ROOT_ALLOWED = setOf("device", "roles", "principals", "remotes", "services", "sms_throttle_s", "settings")
     private val ROLE_ALLOWED = setOf("commands")
     private val PRINCIPAL_ALLOWED = setOf("agent", "phone", "roles", "allow_from")
-    private val SETTINGS_ALLOWED = setOf("sms_truncate_limit", "sms_raw_storage_refs")
+    private val SETTINGS_ALLOWED = setOf("sms_truncate_limit", "sms_raw_storage_refs", "sms_sticky_ttl_s")
+    private const val DEFAULT_STICKY_TTL_S = 1800L
 
     fun parse(root: JSONObject): A8sAndroid.Config {
         rejectUnknownKeys(root, ROOT_ALLOWED)
@@ -169,6 +170,7 @@ object ConfigParser {
         val settings = root.optJSONObject("settings")
         var smsChunkLimit = SmsSegmenter.DEFAULT_CHUNK_CHARS
         var smsRawStorageRefs = false
+        var smsStickyTtlMs = DEFAULT_STICKY_TTL_S * 1000L
         if (settings != null) {
             rejectUnknownKeys(settings, SETTINGS_ALLOWED)
             if (settings.has("sms_truncate_limit")) {
@@ -176,9 +178,16 @@ object ConfigParser {
                     .coerceAtLeast(SmsSegmenter.MIN_CHUNK_CHARS)
             }
             smsRawStorageRefs = settings.optBoolean("sms_raw_storage_refs", false)
+            if (settings.has("sms_sticky_ttl_s")) {
+                val ttlS = settings.getLong("sms_sticky_ttl_s")
+                require(ttlS >= 0L) { "sms_sticky_ttl_s must not be negative" }
+                smsStickyTtlMs = ttlS * 1000L
+            }
         }
 
-        return A8sAndroid.Config(device, registry, remotes, services, smsThrottleMs, smsChunkLimit, smsRawStorageRefs)
+        return A8sAndroid.Config(
+            device, registry, remotes, services, smsThrottleMs, smsChunkLimit, smsRawStorageRefs, smsStickyTtlMs,
+        )
     }
 
     private fun parseRoles(obj: JSONObject): Map<String, RoleSpec> {

@@ -98,6 +98,68 @@ class ConfigParserTest {
     }
 
     @Test
+    fun `parse respects sms_sticky_ttl_s setting`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "settings": {
+                "sms_sticky_ttl_s": 60
+              }
+            }
+            """.trimIndent(),
+        )
+        val cfg = ConfigParser.parse(json)
+        assertEquals(60_000L, cfg.smsStickyTtlMs)
+    }
+
+    @Test
+    fun `parse defaults sms_sticky_ttl_s to 1800s when absent`() {
+        val cfg = TestFixtures.config()
+        assertEquals(1_800_000L, cfg.smsStickyTtlMs)
+    }
+
+    @Test
+    fun `parse allows sms_sticky_ttl_s of zero to disable expiry`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "settings": {
+                "sms_sticky_ttl_s": 0
+              }
+            }
+            """.trimIndent(),
+        )
+        val cfg = ConfigParser.parse(json)
+        assertEquals(0L, cfg.smsStickyTtlMs)
+    }
+
+    @Test
+    fun `parse rejects negative sms_sticky_ttl_s`() {
+        val json = JSONObject(
+            """
+            {
+              "device": "d",
+              "roles": {"owner": {"commands": ["*"]}},
+              "principals": [{"agent": "a", "roles": ["owner"]}],
+              "remotes": {"r": {"broker": "b", "topic": "t"}},
+              "settings": {
+                "sms_sticky_ttl_s": -1
+              }
+            }
+            """.trimIndent(),
+        )
+        assertThrows(IllegalArgumentException::class.java) { ConfigParser.parse(json) }
+    }
+
+    @Test
     fun `parse clamps stored SMS chunk limit to minimum`() {
         val json = JSONObject(
             """

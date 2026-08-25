@@ -2,6 +2,7 @@ package com.a8s.android
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -74,5 +75,48 @@ class NicknamesManagerTest {
 
         assertEquals("alise", result.resolved)
         assertFalse(result.matched)
+    }
+
+    @Test
+    fun `isKnownTarget accepts a canonical target`() {
+        val resolution = NicknamesManager.resolveTellFromMappings(
+            args = listOf("robin", "hi"),
+            enabled = true,
+            mappings = emptyMap(),
+            canonicalNames = setOf("robin"),
+        )!!
+
+        assertTrue(NicknamesManager.isKnownTarget(resolution, setOf("robin")))
+    }
+
+    @Test
+    fun `isKnownTarget accepts a matched nickname`() {
+        val resolution = NicknamesManager.resolveTellFromMappings(
+            args = listOf("robby", "hi"),
+            enabled = true,
+            mappings = mapOf("robby" to "robin"),
+            canonicalNames = setOf("robin"),
+        )!!
+
+        assertTrue(NicknamesManager.isKnownTarget(resolution, setOf("robin")))
+    }
+
+    @Test
+    fun `isKnownTarget rejects an unresolvable word, the ok thanks case`() {
+        val noMessage = NicknamesManager.resolveTellFromMappings(
+            args = listOf("thanks"),
+            enabled = true,
+            mappings = emptyMap(),
+            canonicalNames = setOf("robin"),
+        )
+        assertNull(noMessage)
+
+        val withMessage = NicknamesManager.resolveTellFromMappings(
+            args = listOf("thanks", "for", "the", "help"),
+            enabled = true,
+            mappings = emptyMap(),
+            canonicalNames = setOf("robin"),
+        )!!
+        assertFalse(NicknamesManager.isKnownTarget(withMessage, setOf("robin")))
     }
 }
