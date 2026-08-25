@@ -114,6 +114,17 @@ object NicknamesManager {
         return TellResolution(args.first(), first, first, args.drop(1).joinToString(" "), false, enabled)
     }
 
+    /**
+     * True when [resolution]'s target names an existing agent — either a
+     * literal canonical name or a nickname match. Both branches of
+     * [resolveTellFromMappings] that fail to match a nickname report
+     * `matched = false`; this is what tells them apart. Used by conversational
+     * (`hey`/`ok`/`okay`) routing to decide whether to run `tell` or fall
+     * through as plain text — `tell` itself has no such guard.
+     */
+    fun isKnownTarget(resolution: TellResolution, canonicalNames: Set<String>): Boolean =
+        resolution.matched || canonicalNames.any { it.trim().equals(resolution.resolved, ignoreCase = true) }
+
     private fun normalizeSpokenTarget(raw: String): String =
         raw.trim().trim { it in SPOKEN_PUNCTUATION }.lowercase(Locale.ROOT)
 

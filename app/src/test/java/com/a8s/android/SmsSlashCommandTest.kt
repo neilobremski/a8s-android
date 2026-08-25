@@ -1,10 +1,18 @@
 package com.a8s.android
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SmsSlashCommandTest {
+
+    private val heyOkPrincipals = """
+        [
+          {"agent":"robin","roles":["owner"]},
+          {"agent":"operator-phone","phone":"+15551234567","roles":["owner"]}
+        ]
+    """.trimIndent()
 
     @Test
     fun `classify authorizes allowed command from phone principal`() {
@@ -82,5 +90,72 @@ class SmsSlashCommandTest {
         assertEquals("cody", resolved.normalizedTarget)
         assertEquals("cody", resolved.resolved)
         assertEquals("send the status update", resolved.message)
+    }
+
+    @Test
+    fun `classify treats hey as a conversational tell candidate`() {
+        val cfg = TestFixtures.config(principalsJson = heyOkPrincipals)
+        val result = SmsSlashCommand.classify("+15551234567", "hey robin hi there", cfg)
+        assertTrue(result is SmsSlashCommand.Result.ConversationalTell)
+        val ct = result as SmsSlashCommand.Result.ConversationalTell
+        assertEquals("tell", ct.command.name)
+        assertEquals(listOf("robin", "hi", "there"), ct.command.args)
+    }
+
+    @Test
+    fun `classify accepts OK and Okay case-insensitively`() {
+        val cfg = TestFixtures.config(principalsJson = heyOkPrincipals)
+        assertTrue(SmsSlashCommand.classify("+15551234567", "OK robin hi", cfg) is SmsSlashCommand.Result.ConversationalTell)
+        assertTrue(
+            SmsSlashCommand.classify("+15551234567", "Okay robin hi", cfg) is SmsSlashCommand.Result.ConversationalTell,
+        )
+    }
+
+    @Test
+    fun `hey delivers the same args as an equivalent tell command`() {
+        val cfg = TestFixtures.config(principalsJson = heyOkPrincipals)
+        val tellResult = SmsSlashCommand.classify(
+            "+15551234567",
+            "tell robin hi there",
+            cfg,
+        ) as SmsSlashCommand.Result.Authorized
+        val heyResult = SmsSlashCommand.classify(
+            "+15551234567",
+            "hey robin hi there",
+            cfg,
+        ) as SmsSlashCommand.Result.ConversationalTell
+        assertEquals(tellResult.command.name, heyResult.command.name)
+        assertEquals(tellResult.command.args, heyResult.command.args)
+    }
+
+    @Test
+    fun `conversational prefix without tell permission falls through as plain text`() {
+        val cfg = TestFixtures.config(
+            rolesJson = """{"owner":{"commands":["*"]},"viewer":{"commands":["info"]}}""",
+            principalsJson = """
+                [
+                  {"agent":"robin","roles":["owner"]},
+                  {"agent":"operator-phone","phone":"+15551234567","roles":["viewer"]}
+                ]
+            """.trimIndent(),
+        )
+        val result = SmsSlashCommand.classify("+15551234567", "hey robin hi", cfg)
+        assertTrue(result is SmsSlashCommand.Result.NotForSms)
+
+        val tellResult = SmsSlashCommand.classify("+15551234567", "tell robin hi", cfg)
+        assertTrue(tellResult is SmsSlashCommand.Result.Forbidden)
+        assertEquals("tell", (tellResult as SmsSlashCommand.Result.Forbidden).verb)
+    }
+
+    @Test
+    fun `conversationalRest extracts hey ok okay and rejects everything else`() {
+        assertEquals("robin hi", SmsSlashCommand.conversationalRest("hey robin hi"))
+        assertEquals("robin hi", SmsSlashCommand.conversationalRest("OK robin hi"))
+        assertEquals("robin hi", SmsSlashCommand.conversationalRest("Okay robin hi"))
+        assertEquals("", SmsSlashCommand.conversationalRest("ok"))
+        assertEquals("", SmsSlashCommand.conversationalRest("Hey"))
+        assertNull(SmsSlashCommand.conversationalRest("hello"))
+        assertNull(SmsSlashCommand.conversationalRest("okayness robin"))
+        assertNull(SmsSlashCommand.conversationalRest("tell robin hi"))
     }
 }

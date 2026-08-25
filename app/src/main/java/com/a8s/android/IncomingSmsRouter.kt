@@ -13,14 +13,32 @@ import java.io.File
  */
 object IncomingSmsRouter {
 
+    private const val TELL_PREFS = "a8s_tell"
+    private const val PINNED_AT_SUFFIX = ":pinnedAt"
+
     fun setLastTellTarget(context: android.content.Context, senderAgent: String, targetAgent: String) {
-        val prefs = context.getSharedPreferences("a8s_tell", android.content.Context.MODE_PRIVATE)
-        prefs.edit().putString(senderAgent, targetAgent).apply()
+        val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(senderAgent, targetAgent)
+            .putLong(senderAgent + PINNED_AT_SUFFIX, System.currentTimeMillis())
+            .apply()
     }
 
     internal fun getLastTellTarget(context: android.content.Context, senderAgent: String): String? {
-        val prefs = context.getSharedPreferences("a8s_tell", android.content.Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
         return prefs.getString(senderAgent, null)
+    }
+
+    /**
+     * Age of the current pin for [senderAgent], in ms since epoch. A pin
+     * written before this timestamp existed (upgrade from an older version)
+     * decodes as pinned right now — fresh, not stale — until the next set or
+     * refresh persists a real value.
+     */
+    internal fun getLastTellPinnedAtMs(context: android.content.Context, senderAgent: String): Long {
+        val prefs = context.getSharedPreferences(TELL_PREFS, android.content.Context.MODE_PRIVATE)
+        val key = senderAgent + PINNED_AT_SUFFIX
+        return if (prefs.contains(key)) prefs.getLong(key, System.currentTimeMillis()) else System.currentTimeMillis()
     }
 
     private data class ResolvedSender(val number: String, val principal: Principal)
@@ -146,6 +164,7 @@ object IncomingSmsRouter {
             CommandDispatch.handle(service, result.command, service::executeCommand)
             true
         }
+        is SmsSlashCommand.Result.ConversationalTell -> handleConversationalTell(service, config, sender, result)
         is SmsSlashCommand.Result.Forbidden -> {
             A8sAndroid.log(
                 "SMS command /${result.verb} from ${result.agent} " +
@@ -154,6 +173,28 @@ object IncomingSmsRouter {
             true
         }
         SmsSlashCommand.Result.NotForSms -> false
+    }
+
+    /**
+     * Resolves a `hey`/`ok`/`okay` body's target before committing to it: an
+     * unresolvable target means this was conversational text, not a command,
+     * so the caller falls through to sticky routing instead of a usage error.
+     */
+    private fun handleConversationalTell(
+        service: A8sService,
+        config: A8sAndroid.Config,
+        sender: ResolvedSender,
+        result: SmsSlashCommand.Result.ConversationalTell,
+    ): Boolean {
+        val canonicalNames = config.registry.localAgents + config.device
+        val resolution = NicknamesManager.resolveTell(service, result.command.args, canonicalNames)
+        if (resolution == null || !NicknamesManager.isKnownTarget(resolution, canonicalNames)) return false
+        A8sAndroid.log(
+            "SMS conversational /${result.command.name} from ${result.principal.agent} " +
+                "(${PhoneNormalize.maskNumber(sender.number)})",
+        )
+        CommandDispatch.handle(service, result.command, service::executeCommand)
+        return true
     }
 
     private data class OutboundSms(val fromAgent: String, val toAgent: String, val body: String, val filesArr: JSONArray)
@@ -168,12 +209,13 @@ object IncomingSmsRouter {
         val toAgent = getLastTellTarget(service, sender.principal.agent)
         if (toAgent == null) {
             val msg = "No default agent set up. This message can't be delivered. " +
-                "Use /tell <agent> <message> to set your active agent."
+                "Use tell <agent> <message> (or hey/ok <agent> ...) to set your active agent."
             A8sAndroid.log("SMS fall-through from ${sender.principal.agent} rejected (no last /tell target)")
             service.sendSms(sender.number, msg)
             mediaFiles.forEach { it.delete() }
             return
         }
+        setLastTellTarget(service, sender.principal.agent, toAgent)
         if (mediaFiles.isNotEmpty()) {
             Thread {
                 val filesArr = service.buildFilesArray(config, mediaFiles)

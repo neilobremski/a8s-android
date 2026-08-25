@@ -31,10 +31,32 @@ object SmsCommandDelivery {
             "MQTT ${forward.targetAgent} -> SMS ${PhoneNormalize.maskNumber(forward.smsToNumber)}: " +
                 "${service.preview(forward.content)} [+${forward.files.size} file(s)]",
         )
+        maybeRepinStickyTarget(service, config, forward)
 
         Thread {
             handleForwardToSmsThread(service, forward, config)
         }.start()
+    }
+
+    /**
+     * An inbound agent forward re-pins the sticky SMS target to itself only
+     * when the phone principal's current pin is absent or stale — a fresh
+     * pin (set by an explicit `tell`/`hey`/`ok`, or refreshed by a recent
+     * plain-text fall-through) is never stolen mid-conversation.
+     */
+    private fun maybeRepinStickyTarget(service: A8sService, config: A8sAndroid.Config, forward: PhoneAgentRoute.Forward) {
+        val phonePrincipal = forward.targetAgent
+        val existing = IncomingSmsRouter.getLastTellTarget(service, phonePrincipal)
+        if (existing == null) {
+            IncomingSmsRouter.setLastTellTarget(service, phonePrincipal, forward.from)
+            return
+        }
+        val pinnedAtMs = IncomingSmsRouter.getLastTellPinnedAtMs(service, phonePrincipal)
+        val stale = StickyPin.shouldRepin(System.currentTimeMillis(), pinnedAtMs, config.smsStickyTtlMs)
+        if (stale) {
+            IncomingSmsRouter.setLastTellTarget(service, phonePrincipal, forward.from)
+            A8sAndroid.log("SMS sticky target now ${forward.from} (previous pin stale)")
+        }
     }
 
     private fun handleForwardToSmsThread(
