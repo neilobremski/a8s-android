@@ -556,7 +556,7 @@ class A8sService : LifecycleService() {
                     urls.put(svc.store(file))
                     if (svc.producesPublicUrl) publicUrls++
                     A8sAndroid.log("Storage[${svc.id}] uploaded ${file.name}")
-                } catch (e: StorageException) {
+                } catch (e: Exception) {
                     lastFailure = "${svc.id}: ${e.message}"
                     A8sAndroid.log("Storage[${svc.id}] upload failed: ${e.message}")
                 }

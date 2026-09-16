@@ -3,9 +3,13 @@ package com.a8s.android
 import android.util.Base64
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.URI
 import java.net.URL
 import java.security.SecureRandom
+import javax.net.ssl.SSLSocketFactory
 
 /**
  * WebDAV backend. Pure stdlib HTTP — no third-party deps.
@@ -98,18 +102,61 @@ class WebdavService(
     private fun makeCollections(key: String) {
         for (path in ancestorPaths(key)) {
             if (path in madeCollections) continue
-            val conn = open("$davBase/$path", "MKCOL")
-            try {
-                val rc = conn.responseCode
-                if (rc !in 200..299 && rc != HTTP_METHOD_NOT_ALLOWED) {
-                    throw StorageException("webdav MKCOL responded $rc for $path")
-                }
+            val rc = try {
+                mkcol("$davBase/$path")
             } catch (e: IOException) {
                 throw StorageException("webdav MKCOL failed for $path: ${e.message}", e)
-            } finally {
-                conn.disconnect()
+            }
+            if (rc !in 200..299 && rc != HTTP_METHOD_NOT_ALLOWED) {
+                throw StorageException("webdav MKCOL responded $rc for $path")
             }
             madeCollections.add(path)
+        }
+    }
+
+    /**
+     * MKCOL over a bare TLS socket. [HttpURLConnection.setRequestMethod]
+     * refuses methods outside its fixed list, and WebDAV needs MKCOL —
+     * the one verb stdlib cannot speak. The request is a fixed shape
+     * (no body), so a socket and a status-line read carry it.
+     */
+    private fun mkcol(url: String): Int {
+        val uri = URI(url)
+        val host = uri.host ?: throw IOException("no host in $url")
+        val port = if (uri.port > 0) uri.port else 443
+        val socket = SSLSocketFactory.getDefault().createSocket()
+        try {
+            socket.connect(InetSocketAddress(host, port), timeoutS * 1000)
+            socket.soTimeout = timeoutS * 1000
+            socket.getOutputStream().apply {
+                write(
+                    buildString {
+                        append("MKCOL ").append(uri.rawPath ?: "/").append(" HTTP/1.1\r\n")
+                        append("Host: ").append(host)
+                        if (port != 443) append(':').append(port)
+                        append("\r\n")
+                        append("User-Agent: a8s-android\r\n")
+                        authHeader()?.let { append("Authorization: ").append(it).append("\r\n") }
+                        append("Content-Length: 0\r\nConnection: close\r\n\r\n")
+                    }.toByteArray(Charsets.US_ASCII),
+                )
+                flush()
+            }
+            val status = readStatusLine(socket.getInputStream())
+            return status.split(' ').getOrNull(1)?.toIntOrNull()
+                ?: throw IOException("bad HTTP status line: $status")
+        } finally {
+            socket.close()
+        }
+    }
+
+    private fun readStatusLine(input: InputStream): String {
+        val buf = StringBuilder(128)
+        while (true) {
+            when (val b = input.read()) {
+                -1, '\n'.code -> return buf.toString().trimEnd('\r')
+                else -> buf.append(b.toChar())
+            }
         }
     }
 
