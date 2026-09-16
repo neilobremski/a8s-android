@@ -80,12 +80,14 @@ object Network {
                 WebdavService(
                     name,
                     url,
-                    baseUrl = baseUrl,
-                    credentials = user?.let {
-                        WebdavService.Credentials(it, spec.optString("password"))
-                    },
-                    prefix = prefix,
-                    timeoutS = timeoutS,
+                    options = WebdavService.Options(
+                        baseUrl = baseUrl,
+                        credentials = user?.let {
+                            WebdavService.Credentials(it, spec.optString("password"))
+                        },
+                        prefix = prefix,
+                        timeoutS = timeoutS,
+                    ),
                 )
             }
             "s3" -> {

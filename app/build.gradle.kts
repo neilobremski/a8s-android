@@ -85,7 +85,17 @@ dependencies {
     // is the de-facto-stable build.
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
+    // WebDAV transport — HttpURLConnection refuses methods outside its
+    // fixed list (MKCOL), so WebDAV needs a client that speaks them.
+    // 4.12.0 is the last 4.x: 5.x ships an AAR compiled against SDK 36,
+    // beyond this project's AGP 8.2.2 ceiling.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    // Real-socket HTTP for service tests, plus TLS material to stand up
+    // an https endpoint.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:4.12.0")
     // org.json is shipped with the Android runtime, so production code uses it
     // freely. JVM unit tests don't have it on the classpath; pull in the
     // upstream jar so `decideRoute` (and any future pure-logic test) works.
