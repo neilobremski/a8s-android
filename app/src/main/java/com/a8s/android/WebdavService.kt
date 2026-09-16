@@ -67,6 +67,10 @@ class WebdavService(
         .connectTimeout(options.timeoutS.toLong(), TimeUnit.SECONDS)
         .readTimeout(options.timeoutS.toLong(), TimeUnit.SECONDS)
         .writeTimeout(options.timeoutS.toLong(), TimeUnit.SECONDS)
+        // A DAV endpoint answers in place; a 301/302/303 would let OkHttp
+        // rewrite a PUT to a GET and read a 200 listing as a stored file.
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
 
     override val producesPublicUrl: Boolean get() = publicBase != null
