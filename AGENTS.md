@@ -155,7 +155,9 @@ the PR will fail.
 | `RemoteConfig.kt` | One MQTT remote (transport, broker, topic, username, password). |
 | `Network.kt` | Pure-Kotlin `parseRemotes` / `parseServices` — strict JSON; rejects unknown keys. |
 | `StorageService.kt` | Interface for cross-cluster file backends — `store(file): URL`, `retrieve(url, dest): Bool`. Stateless. |
-| `TempFileOrgService.kt` | First (and currently only) `StorageService` impl. Pure-stdlib `HttpURLConnection` multipart upload + GET-`/download` retrieval. 50 MiB cap to stay well under the upstream's 100 MB hard limit. Per-service opts: `expiry_hours` (1/6/24/48, default 24), `timeout_s` (default 30). |
+| `TempFileOrgService.kt` | `StorageService` impl: public paste host. Pure-stdlib `HttpURLConnection` multipart upload + GET-`/download` retrieval. 50 MiB cap to stay well under the upstream's 100 MB hard limit. Per-service opts: `expiry_hours` (1/6/24/48, default 24), `timeout_s` (default 30). |
+| `S3Service.kt` | `StorageService` impl mirroring `apps/a8s/services/s3.py`. SigV4-signed PUT, returns a presigned GET URL (receiver needs no creds). No AWS SDK — keys come from config (`access_key`/`secret_key`/`session_token`); `endpoint_url` selects an S3-compatible host via path-style addressing. `producesPublicUrl` is always true. |
+| `SigV4.kt` | Hand-rolled AWS Signature V4: presigned GET + header-signed PUT. Pure JCA (`HmacSHA256`/`SHA-256`); testable against AWS's published signing vectors. |
 
 Tests under `app/src/test/java/com/a8s/android/` mirror the pure-Kotlin
 files. Anything that touches Android framework classes lives in the

@@ -88,8 +88,37 @@ object Network {
                     timeoutS = timeoutS,
                 )
             }
+            "s3" -> {
+                val accessKey = spec.optString("access_key")
+                val secretKey = spec.optString("secret_key")
+                val sessionToken = spec.optString("session_token").ifBlank { null }
+                val region = spec.optString("region").ifBlank { S3Service.DEFAULT_REGION }
+                val prefix = spec.optString("prefix").ifBlank { null }
+                val endpointUrl = spec.optString("endpoint_url").ifBlank { null }
+                val presignHours = spec.optInt("presign_hours", S3Service.DEFAULT_PRESIGN_HOURS)
+                val timeoutS = spec.optInt("timeout_s", S3Service.DEFAULT_TIMEOUT_S)
+                rejectUnknownKeys(
+                    spec,
+                    SERVICE_RESERVED + setOf(
+                        "region", "access_key", "secret_key", "session_token",
+                        "prefix", "presign_hours", "timeout_s", "endpoint_url",
+                    ),
+                )
+                S3Service(
+                    name,
+                    url,
+                    creds = SigV4.Credentials(accessKey, secretKey, sessionToken),
+                    options = S3Service.Options(
+                        region = region,
+                        prefix = prefix,
+                        presignHours = presignHours,
+                        timeoutS = timeoutS,
+                        endpointUrl = endpointUrl,
+                    ),
+                )
+            }
             else -> throw IllegalArgumentException(
-                "storage $name: unsupported service kind '$kind' (known: tempfile_org, webdav)",
+                "storage $name: unsupported service kind '$kind' (known: tempfile_org, webdav, s3)",
             )
         }
     }

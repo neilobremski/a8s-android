@@ -55,6 +55,13 @@ The app is configured via a JSON file with the following schema:
     "tempfile": {
       "service": "tempfile_org",
       "url": "https://tempfile.org"
+    },
+    "bucket": {
+      "service": "s3",
+      "url": "s3://my-bucket/a8s",
+      "region": "us-west-2",
+      "access_key": "AKIA...",
+      "secret_key": "..."
     }
   }
 }
@@ -112,6 +119,14 @@ The app is configured via a JSON file with the following schema:
   | ---- | ----- | ------- |
   | `webdav` | `webdav://<host>/<path>` (maps to HTTPS on the wire) | `base_url`, `user`, `password`, `prefix` (default `a8s`), `timeout_s` (default 60) |
   | `tempfile_org` | `https://tempfile.org` | `expiry_hours` (1, 6, 24, 48; default 24), `timeout_s` (default 30) |
+  | `s3` | `s3://<bucket>[/<prefix>]` | `access_key`, `secret_key` (required), `region` (default `us-east-1`), `prefix`, `presign_hours` (default 24, max 168), `timeout_s` (default 60), `endpoint_url`, `session_token` |
+
+  The `s3` kind uploads with a SigV4-signed PUT and returns a **presigned GET
+  URL** — the receiver fetches a bare link with no credentials of its own, so
+  it needs nothing configured. There is no AWS credential chain on a phone;
+  the keys live in the config beside the other service secrets. Point a bucket
+  lifecycle rule at the `prefix` for expiry. `endpoint_url` selects an
+  S3-compatible host and switches addressing to path-style.
 
   **`base_url` is what makes a WebDAV upload useful.** The DAV endpoint
   needs credentials, so a recipient cannot fetch from it. `base_url` is
