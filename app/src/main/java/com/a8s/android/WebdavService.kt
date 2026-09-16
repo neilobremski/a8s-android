@@ -3,12 +3,16 @@ package com.a8s.android
 import android.util.Base64
 import java.io.File
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.SecureRandom
+import java.util.concurrent.TimeUnit
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 
 /**
- * WebDAV backend. Pure stdlib HTTP — no third-party deps.
+ * WebDAV backend. Transport is OkHttp — `HttpURLConnection` refuses methods
+ * outside its fixed list, and WebDAV needs MKCOL.
  *
  * Mirrors `apps/a8s/services/webdav.py` upstream. Configure with a
  * `webdav://` URL, which maps to HTTPS for the PUT:
@@ -37,18 +41,37 @@ import java.security.SecureRandom
 class WebdavService(
     override val id: String,
     davUrl: String,
-    private val baseUrl: String? = null,
-    private val credentials: Credentials? = null,
-    private val prefix: String = DEFAULT_PREFIX,
-    private val timeoutS: Int = DEFAULT_TIMEOUT_S,
+    options: Options = Options(),
 ) : StorageService {
 
     /** Basic-auth pair for the DAV endpoint. Held together so the two never
      *  drift apart, and so the constructor stays readable. */
     data class Credentials(val user: String, val password: String)
 
+    /** Per-service tuning; everything has a default. `http` is a test seam —
+     *  production always builds the default client. */
+    data class Options(
+        val baseUrl: String? = null,
+        val credentials: Credentials? = null,
+        val prefix: String = DEFAULT_PREFIX,
+        val timeoutS: Int = DEFAULT_TIMEOUT_S,
+        internal val http: OkHttpClient? = null,
+    )
+
     private val davBase: String = toHttps(davUrl).trimEnd('/')
-    private val publicBase: String? = baseUrl?.trimEnd('/')
+    private val publicBase: String? = options.baseUrl?.trimEnd('/')
+    private val credentials: Credentials? = options.credentials
+    private val prefix: String = options.prefix
+
+    private val client: OkHttpClient = options.http ?: OkHttpClient.Builder()
+        .connectTimeout(options.timeoutS.toLong(), TimeUnit.SECONDS)
+        .readTimeout(options.timeoutS.toLong(), TimeUnit.SECONDS)
+        .writeTimeout(options.timeoutS.toLong(), TimeUnit.SECONDS)
+        // A DAV endpoint answers in place; a 301/302/303 would let OkHttp
+        // rewrite a PUT to a GET and read a 200 listing as a stored file.
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
 
     override val producesPublicUrl: Boolean get() = publicBase != null
 
@@ -63,22 +86,16 @@ class WebdavService(
         val key = objectKey(file.name)
         makeCollections(key)
         val putUrl = "$davBase/$key"
-        val conn = open(putUrl, "PUT")
-        conn.doOutput = true
-        conn.setRequestProperty("Content-Type", "application/octet-stream")
-        conn.setFixedLengthStreamingMode(file.length())
         try {
-            file.inputStream().use { input ->
-                conn.outputStream.use { out -> input.copyTo(out) }
-            }
-            val rc = conn.responseCode
-            if (rc !in 200..299) {
-                throw StorageException("webdav PUT responded $rc for ${file.name}")
+            client.newCall(
+                request(putUrl).put(file.asRequestBody(OCTET_STREAM)).build(),
+            ).execute().use { resp ->
+                if (resp.code !in 200..299) {
+                    throw StorageException("webdav PUT responded ${resp.code} for ${file.name}")
+                }
             }
         } catch (e: IOException) {
             throw StorageException("webdav PUT failed for ${file.name}: ${e.message}", e)
-        } finally {
-            conn.disconnect()
         }
         return publicBase?.let { "$it/$key" } ?: putUrl
     }
@@ -98,20 +115,20 @@ class WebdavService(
     private fun makeCollections(key: String) {
         for (path in ancestorPaths(key)) {
             if (path in madeCollections) continue
-            val conn = open("$davBase/$path", "MKCOL")
-            try {
-                val rc = conn.responseCode
-                if (rc !in 200..299 && rc != HTTP_METHOD_NOT_ALLOWED) {
-                    throw StorageException("webdav MKCOL responded $rc for $path")
-                }
+            val rc = try {
+                mkcol("$davBase/$path")
             } catch (e: IOException) {
                 throw StorageException("webdav MKCOL failed for $path: ${e.message}", e)
-            } finally {
-                conn.disconnect()
+            }
+            if (rc !in 200..299 && rc != HTTP_METHOD_NOT_ALLOWED) {
+                throw StorageException("webdav MKCOL responded $rc for $path")
             }
             madeCollections.add(path)
         }
     }
+
+    private fun mkcol(url: String): Int =
+        client.newCall(request(url).method("MKCOL", null).build()).execute().use { it.code }
 
     /**
      * Fetch a URL under `base_url` by mapping it back onto the WebDAV path and
@@ -123,27 +140,27 @@ class WebdavService(
         val resolved = AttachmentPath.bundleFile(dest.parentFile ?: File("."), dest.name)
         val target = resolved.file
             ?: throw StorageException("webdav: ${resolved.reason}")
-        val conn = open("$davBase/$key", "GET")
         try {
-            val rc = conn.responseCode
-            if (rc == 404) return false
-            if (rc !in 200..299) {
-                throw StorageException("webdav GET responded $rc for $url")
+            client.newCall(request("$davBase/$key").get().build()).execute().use { resp ->
+                if (resp.code == 404) return false
+                if (resp.code !in 200..299) {
+                    throw StorageException("webdav GET responded ${resp.code} for $url")
+                }
+                target.parentFile?.mkdirs()
+                val part = File(target.parentFile, target.name + ".part")
+                val body = resp.body
+                    ?: throw StorageException("webdav GET returned no body for $url")
+                body.byteStream().use { input ->
+                    part.outputStream().use { out -> input.copyTo(out) }
+                }
+                if (!part.renameTo(target)) {
+                    part.delete()
+                    throw StorageException("webdav: cannot move the download into place")
+                }
+                return true
             }
-            target.parentFile?.mkdirs()
-            val part = File(target.parentFile, target.name + ".part")
-            conn.inputStream.use { input ->
-                part.outputStream().use { out -> input.copyTo(out) }
-            }
-            if (!part.renameTo(target)) {
-                part.delete()
-                throw StorageException("webdav: cannot move the download into place")
-            }
-            return true
         } catch (e: IOException) {
             throw StorageException("webdav GET failed for $url: ${e.message}", e)
-        } finally {
-            conn.disconnect()
         }
     }
 
@@ -162,13 +179,9 @@ class WebdavService(
         return if (prefix.isEmpty()) "$token/$safe" else "$prefix/$token/$safe"
     }
 
-    private fun open(url: String, method: String): HttpURLConnection =
-        (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = timeoutS * 1000
-            readTimeout = timeoutS * 1000
-            setRequestProperty("User-Agent", "a8s-android")
-            authHeader()?.let { setRequestProperty("Authorization", it) }
+    private fun request(url: String): Request.Builder =
+        Request.Builder().url(url).header("User-Agent", "a8s-android").apply {
+            authHeader()?.let { header("Authorization", it) }
         }
 
     private fun authHeader(): String? {
@@ -183,6 +196,7 @@ class WebdavService(
         const val DEFAULT_PREFIX: String = "a8s"
         const val DEFAULT_TIMEOUT_S: Int = 60
         private const val HTTP_METHOD_NOT_ALLOWED = 405
+        private val OCTET_STREAM = "application/octet-stream".toMediaType()
 
         /** Every collection above `key`, outermost first: the paths MKCOL
          *  must create, in the order it must create them. */
